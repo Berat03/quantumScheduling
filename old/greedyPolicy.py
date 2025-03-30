@@ -4,11 +4,12 @@ import math
 import random
 
 # Initialize parameters
-pSwap = 0.6
-pGen = 0.2
+pSwap = 0.8
+pGen = 0.8
 initialEdges = [(0,1), (1, 3), (2, 3), (3, 4), (4, 5), (4,6)]
-goalEdges = [(0,5), (2,6)]
-maxAge = 3
+goalEdges = [(0,5), (3,6)]
+maxAge = 2
+
 
 # Global tracking variables
 total_timesteps = 0
@@ -26,7 +27,7 @@ def get_reward(action):
         goal_tuple = tuple(sorted(goal))
         if goal_tuple in action['goals_achieved']:
             goal_success_counts[goal_tuple] += 1
-        current_edr = goal_success_counts[goal_tuple] / total_timesteps
+        current_edr = max(0.001, goal_success_counts[goal_tuple] / total_timesteps)
         edr_history[goal_tuple].append(current_edr)
     
     if not action['goals_achieved']:
@@ -192,4 +193,4 @@ def simulate_greedy_policy(initial_state, num_steps=1000):
 initial_state = next(state for state in allStates 
                     if all(age == -1 for _, age in state))
 
-edr_history, goals_achieved, total_reward = simulate_greedy_policy(initial_state, num_steps=10000)
+edr_history, goals_achieved, total_reward = simulate_greedy_policy(initial_state, num_steps=100000)

@@ -1,15 +1,18 @@
 from computeTransitionProb import getPossibleStates, getTransitionProbabilities
 import matplotlib.pyplot as plt
 import math
+import random
 
 # Initialize parameters
-gamma = 0.9
+gamma = 0.99
 epsilon = 0.001
-pSwap = 0.6
-pGen = 0.2
-initialEdges = [(0,1), (1, 3), (2, 3), (3, 4), (4, 5), (4,6)]
-goalEdges = [(0,5), (2,6)]
-maxAge = 3
+
+initialEdges = [(0, 1), (1, 2), (2, 3)]
+goalEdges = [(0, 2), (0, 3)]
+pSwap = 0.9
+pGen = 0.9
+maxAge = 2
+
 
 # Global tracking variables
 total_timesteps = 0
@@ -35,17 +38,16 @@ def get_reward(action):
     
     total_reward = 0
     edges_per_goal = action['swap_edges_per_goal']
-    
+    # MULTIPL GOAL BONUS TODO:
     # Calculate reward for achieved goals
     for goal in action['goals_achieved']:
         if goal in edges_per_goal:
             swaps_for_this_goal = len(edges_per_goal[goal]) - 1
             instant_rate = pSwap ** swaps_for_this_goal
-            edr = goal_success_counts[goal] / total_timesteps
+            edr = max(0.001, goal_success_counts[goal] / total_timesteps)
             
             if instant_rate > 0 and edr > 0:
-                total_reward += math.log(instant_rate / edr)
-    
+                total_reward += instant_rate / edr #+ math.log(instant_rate / edr) # +1 to avoid negative values from log (<1)
     return total_reward
 
 # Get all possible states and initialize value function
@@ -104,7 +106,10 @@ while True:
     prev_V = V.copy()
     delta = 0
     
+    # Add at the start of each iteration
+    # Validate transition probabilities sum to 1
     for state in allStates:
+        old_value = V[state]
         bestActionValue = float('-inf')
         
         for action in allActions[state]:
@@ -120,22 +125,32 @@ while True:
             immediateReward = get_reward(action_dict)
             futureValue = 0
             
-            try:
-                for nextState, prob in allTransitions[(state, action)]:
-                    if nextState not in prev_V:
-                        print(f"Warning: Encountered unexpected state: {nextState}")
-                        continue
-                    futureValue += prob * prev_V[nextState]
-            except KeyError as e:
-                print(f"Warning: Missing transition for state {state} and action {action}")
-                continue
+            # Add detailed debug printing
+            print(f"\nCalculating value for action: {action}")
+            print(f"Immediate reward: {immediateReward}")
+            
+            transitions_debug = []
+            for nextState, prob in allTransitions[(state, action)]:
+                next_value = prev_V[nextState]
+                contribution = prob * next_value
+                futureValue += contribution
+                transitions_debug.append(f"  State value: {next_value:.3f}, Prob: {prob:.3f}, Contribution: {contribution:.3f}")
             
             value = immediateReward + gamma * futureValue
+            
+            print("Transition details:")
+            for debug_line in transitions_debug:
+                print(debug_line)
+            print(f"Total future value: {futureValue:.3f}")
+            print(f"Discounted future value: {gamma * futureValue:.3f}")
+            print(f"Final value: {value:.3f}")
+            
             bestActionValue = max(bestActionValue, value)
         
         V[state] = bestActionValue if bestActionValue != float('-inf') else 0
         delta = max(delta, abs(V[state] - prev_V[state]))
-    
+    if V == prev_V:
+        print('########################### IDENTICAL VALUES DETECTED')
     deltas.append(delta)
     iteration += 1
 
@@ -145,10 +160,7 @@ while True:
     if iteration > 1000:
         print("\nWarning: Maximum iterations reached without convergence")
         break
-print(f"Number of states: {len(V.keys())}")
-for vin in V.keys():
-    print(vin)
-
+    
 # Print final statistics
 print("\n=== Final EDR Statistics ===")
 for goal in goalEdges:
@@ -188,20 +200,18 @@ plt.title('Distribution of State Values')
 plt.grid(True)
 plt.show()
 
-# After value iteration converges, add this:
-print("\n=== Final State Values ===")
-# Sort states by their values to see highest/lowest value states
-sorted_states = sorted(V.items(), key=lambda x: x[1], reverse=True)
+# print("\n=== Final State Values ===")
+# sorted_states = sorted(V.items(), key=lambda x: x[1], reverse=True)
 
-for state, value in sorted_states:
-    # Format state for readability
-    state_str = "State: "
-    for edge, age in state:
-        state_str += f"{edge}(age={age}), "
-    state_str = state_str[:-2]  # Remove trailing comma and space
+# for state, value in sorted_states:
+#     # Format state for readability
+#     state_str = "State: "
+#     for edge, age in state:
+#         state_str += f"{edge}(age={age}), "
+#     state_str = state_str[:-2]  # Remove trailing comma and space
     
-    print(f"\n{state_str}")
-    print(f"Value: {value:.6f}")
+#     print(f"\n{state_str}")
+#     print(f"Value: {value:.6f}")
 
 # Also add a summary of value statistics
 values = list(V.values())
@@ -272,9 +282,6 @@ def compute_bellman_error(V, allStates, allActions, allTransitions, gamma):
 # print(f"\nFinal Bellman Error: {final_error}")
 # # Should be close to or less than epsilon 
 
-
-
-
 # print("\n=== Sample Optimal Actions ===")
 # for state in list(V.keys()): 
 #     optimal_action = get_optimal_policy(state, V, allActions, allTransitions, gamma)
@@ -282,21 +289,38 @@ def compute_bellman_error(V, allStates, allActions, allTransitions, gamma):
 #     print(f"Optimal action: {optimal_action}")
 
 
-# Add these imports at the top if not already present
-import random
 
 print("\n=== Running Policy Simulation ===")
+def get_greedy_action(state, allActions):
+    """Compute what a greedy policy would do - choose action with highest immediate reward"""
+    best_action = None
+    best_reward = float('-inf')
+    
+    for action in allActions[state]:
+        action_dict = {
+            'swap_edges_per_goal': {},
+            'goals_achieved': [tuple(sorted(g)) for g in action[1]]
+        }
+        
+        for goal in action[1]:
+            action_dict['swap_edges_per_goal'][tuple(sorted(goal))] = [tuple(sorted(e)) for e in action[0]]
+        
+        immediate_reward = get_reward(action_dict)
+        
+        if immediate_reward > best_reward:
+            best_reward = immediate_reward
+            best_action = action
+    
+    return best_action, best_reward
+
 def simulate_policy(initial_state, num_steps=1000):
     current_state = initial_state
     total_reward = 0
     goals_achieved = {tuple(sorted(goal)): 0 for goal in goalEdges}
+    different_choices = 0  # Counter for different choices
     
     # Track EDR over time for plotting
     edr_history = {tuple(sorted(goal)): [] for goal in goalEdges}
-    
-    print(f"Starting state:")
-    for edge, age in current_state:
-        print(f"  {edge}(age={age})")
     
     for step in range(num_steps):
         # Get optimal action
@@ -304,12 +328,66 @@ def simulate_policy(initial_state, num_steps=1000):
         if not optimal_action:
             print(f"\nStep {step + 1}: No valid action found")
             continue
-            
-        # Print current action
-        print(f"\nStep {step + 1}:")
-        print(f"Action: Swap edges {optimal_action[0]}")
-        print(f"Goals attempted: {optimal_action[1]}")
         
+        # Get greedy action
+        greedy_action, greedy_reward = get_greedy_action(current_state, allActions)
+        
+        # Compare actions
+        if optimal_action != greedy_action:
+            different_choices += 1
+            
+            # Calculate full breakdown for optimal action
+            optimal_dict = {
+                'swap_edges_per_goal': {},
+                'goals_achieved': [tuple(sorted(g)) for g in optimal_action[1]]
+            }
+            for goal in optimal_action[1]:
+                optimal_dict['swap_edges_per_goal'][tuple(sorted(goal))] = [tuple(sorted(e)) for e in optimal_action[0]]
+            optimal_immediate = get_reward(optimal_dict)
+            
+            optimal_future = 0
+            optimal_transitions = []
+            for nextState, prob in allTransitions[(current_state, optimal_action)]:
+                contribution = prob * V[nextState]
+                optimal_future += contribution
+                optimal_transitions.append(f"    State value: {V[nextState]:.3f}, Prob: {prob:.3f}, Contribution: {contribution:.3f}")
+            
+            optimal_discounted = gamma * optimal_future
+            optimal_total = optimal_immediate + optimal_discounted
+            
+            # Calculate full breakdown for greedy action
+            greedy_future = 0
+            greedy_transitions = []
+            for nextState, prob in allTransitions[(current_state, greedy_action)]:
+                contribution = prob * V[nextState]
+                greedy_future += contribution
+                greedy_transitions.append(f"    State value: {V[nextState]:.3f}, Prob: {prob:.3f}, Contribution: {contribution:.3f}")
+            
+            greedy_discounted = gamma * greedy_future
+            greedy_total = greedy_reward + greedy_discounted
+            
+            print(f"\nStep {step + 1}: Optimal != Greedy")
+            print(f"Current state: {current_state}")
+            print(f"\nOptimal action: {optimal_action}")
+            print(f"  Immediate reward: {optimal_immediate:.3f}")
+            print(f"  Future value breakdown:")
+            for t in optimal_transitions:
+                print(t)
+            print(f"  Total future value: {optimal_future:.3f}")
+            print(f"  Discounted future value: {optimal_discounted:.3f}")
+            print(f"  Final total value: {optimal_total:.3f}")
+            
+            print(f"\nGreedy action: {greedy_action}")
+            print(f"  Immediate reward: {greedy_reward:.3f}")
+            print(f"  Future value breakdown:")
+            for t in greedy_transitions:
+                print(t)
+            print(f"  Total future value: {greedy_future:.3f}")
+            print(f"  Discounted future value: {greedy_discounted:.3f}")
+            print(f"  Final total value: {greedy_total:.3f}")
+            
+            print(f"\nDifference in total value: {optimal_total - greedy_total:.3f}")
+            
         # Calculate reward
         action_dict = {
             'swap_edges_per_goal': {},
@@ -339,15 +417,11 @@ def simulate_policy(initial_state, num_steps=1000):
             if rand_val <= cumulative_prob:
                 current_state = next_state
                 break
-        
-        # Print step results
-        print(f"Reward: {reward:.3f}")
-        print("New state:")
-        for edge, age in current_state:
-            print(f"  {edge}(age={age})")
     
     print("\n=== Simulation Results ===")
     print(f"Total steps: {num_steps}")
+    print(f"Times optimal policy differed from greedy: {different_choices}")
+    print(f"Percentage of different choices: {(different_choices/num_steps)*100:.2f}%")
     print(f"Total reward: {total_reward:.3f}")
     print(f"Average reward per step: {total_reward/num_steps:.3f}")
     print("\nGoals achieved:")
@@ -373,4 +447,4 @@ def simulate_policy(initial_state, num_steps=1000):
 initial_state = next(state for state in allStates 
                     if all(age == -1 for _, age in state))
 
-edr_history, goals_achieved, total_reward = simulate_policy(initial_state, num_steps=100000)
+edr_history, goals_achieved, total_reward = simulate_policy(initial_state, num_steps=10000)
