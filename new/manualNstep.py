@@ -1,7 +1,7 @@
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-from utility import qTable, getPossibleActions, performAction, ageEntanglements, generateEntanglement
+from utility import qTable, getPossibleActions, performAction, ageEntanglements, generateEntanglement, simulate_policy
 
 def getEpsilonGreedyAction(state, Q, epsilon, goalEdges):
     possible_actions = getPossibleActions(state, goalEdges)
@@ -33,7 +33,7 @@ def getReward(action, goal_success_counts, total_timesteps, pSwap):
         return instant_rate / edr
     return 0
 
-def plot_learning_metrics(states, actions, rewards, Q, edr_history, total_steps):
+def plot_learning_metrics(states, actions, rewards, Q, edr_history, total_steps, q_value_diffs):
     # Create figure with 4 subplots
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
     
@@ -46,25 +46,15 @@ def plot_learning_metrics(states, actions, rewards, Q, edr_history, total_steps)
     axs[0, 0].legend()
     axs[0, 0].grid(True)
     
-    # 2. Plot Q-value changes
-    q_values = []
-    for i in range(len(states)-1):
-        if i < len(actions) and actions[i]:
-            q_values.append(Q.get_q_value(states[i], actions[i]))
-    axs[0, 1].plot(range(len(q_values)), q_values)
-    axs[0, 1].set_title('Q-value Changes')
+    # Remove Q-value Changes plot
+    # 2. Plot reward history
+    axs[0, 1].plot(range(len(rewards)), rewards)
+    axs[0, 1].set_title('Reward History')
     axs[0, 1].set_xlabel('Steps')
-    axs[0, 1].set_ylabel('Q-value')
+    axs[0, 1].set_ylabel('Reward')
     axs[0, 1].grid(True)
     
-    # 3. Plot reward history
-    axs[1, 0].plot(range(len(rewards)), rewards)
-    axs[1, 0].set_title('Reward History')
-    axs[1, 0].set_xlabel('Steps')
-    axs[1, 0].set_ylabel('Reward')
-    axs[1, 0].grid(True)
-    
-    # 4. Plot action selection distribution
+    # 3. Plot action selection distribution
     action_counts = {}
     for action_list in actions:
         if action_list:
@@ -72,27 +62,35 @@ def plot_learning_metrics(states, actions, rewards, Q, edr_history, total_steps)
             key = str(action)  # Convert to string for counting
             action_counts[key] = action_counts.get(key, 0) + 1
     
-    axs[1, 1].bar(action_counts.keys(), action_counts.values())
-    axs[1, 1].set_title('Action Selection Distribution')
-    axs[1, 1].set_xlabel('Actions')
-    axs[1, 1].set_ylabel('Count')
-    axs[1, 1].tick_params(axis='x', rotation=45)
+    axs[1, 0].bar(action_counts.keys(), action_counts.values())
+    axs[1, 0].set_title('Action Selection Distribution')
+    axs[1, 0].set_xlabel('Actions')
+    axs[1, 0].set_ylabel('Count')
+    axs[1, 0].tick_params(axis='x', rotation=45)
+    axs[1, 0].grid(True)
+    
+    # 4. Plot Q-table convergence
+    axs[1, 1].plot(range(len(q_value_diffs)), q_value_diffs)
+    axs[1, 1].set_title('Q-table Convergence')
+    axs[1, 1].set_xlabel('Steps')
+    axs[1, 1].set_ylabel('Q-value Difference')
     axs[1, 1].grid(True)
     
     plt.tight_layout()
     plt.show()
 
 
-def run_n_step_sarsa(initialEdges, goalEdges, totalSteps, nLookahead, epsilon, gamma, alpha, pGen, pSwap, maxAge):
+def run_n_step_sarsa(initialEdges, goalEdges, totalSteps, nLookahead, epsilon, gamma, alpha, pGen, pSwap, maxAge, convergence_epsilon=0.001, plot=True):
     Q = qTable()
     total_timesteps = 0
     EDRS = {goal: 0 for goal in goalEdges}
     edr_history = {goal: [] for goal in goalEdges}  # Track EDR at each step
+    q_value_diffs = []  # Track Q-value differences for convergence
     
     # Convert initialEdges to proper state format (edge, age)
     initial_state = [(edge, -1) for edge in initialEdges]  # Start with no entanglements
     states = [initial_state]
-    actions = [([], None)]  # Always include do nothing action first, as the intial state is always empty too
+    actions = [([], None)]  # Always include do nothing action first, as the initial state is always empty too
     rewards = []
     
     current_state = initial_state
@@ -148,43 +146,87 @@ def run_n_step_sarsa(initialEdges, goalEdges, totalSteps, nLookahead, epsilon, g
             # Apply 1-step SARSA update
             new_q = current_q + alpha * (r + gamma * next_q - current_q)
             Q.set_q_value(s, a, new_q)
-            print(f"Q-value update: {current_q} -> {new_q}")
+            
+            # Calculate Q-value difference for convergence tracking
+            q_value_diff = abs(new_q - current_q)
+            q_value_diffs.append(q_value_diff)
+            # print(f"Q-value update: {current_q} -> {new_q}, Difference: {q_value_diff}")
+            
+            # # Check for convergence
+            # if q_value_diff < convergence_epsilon:
+            #     print(f"[Converged] Step {t} with Q-value difference {q_value_diff:.6f}")
+            #     break
     
     print("\nFinal EDRS:", EDRS)
     print("Total rewards:", sum(rewards))
     print("Number of Q-value updates:", len(Q.q_values))
     
-    # Plot learning metrics
-    plot_learning_metrics(states, actions, rewards, Q, edr_history, totalSteps)
+    # Plot learning metrics including Q-table convergence
+    if plot:
+        plot_learning_metrics(states, actions, rewards, Q, edr_history, totalSteps, q_value_diffs)
     
     return current_state, Q, EDRS
 
 
-###### N-Step SARSA ######
-# Parameters:
 # === CONFIGURATION ===
 
-edges = [(0, 1), (1,2), (2, 3), (3, 4)]
+edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
 goalEdges = [(0, 4), (2, 4)]
 pSwap = 0.8
 pGen = 0.8
 maxAge = 2
 
-
-totalSteps = 300000
+totalSteps = 1000000
 nLookahead = 5
 epsilon = 0.1
-gamma = 0.95
-alpha = 0.1
-currentState, Q, EDRS = run_n_step_sarsa(edges, goalEdges, totalSteps, nLookahead, epsilon, gamma, alpha, pGen, pSwap, maxAge)
+gamma = 0.99
+alpha = 0.3
 
-from utility import simulate_policy
-goal_success_counts, total_timesteps, edr_history = simulate_policy(
-    Q_table=Q,  # Your trained qTable object
-    edges=edges,
-    goal_edges=goalEdges,
-    p_swap=pSwap,
-    p_gen=pGen,
-    max_age=maxAge,
-    num_steps=10000
-)
+# Number of unique policies to generate
+num_policies = 5
+
+# Store results for each policy
+policy_results = []
+
+for i in range(num_policies):
+    print(f"\nTraining policy {i + 1}/{num_policies}...")
+    currentState, Q, EDRS = run_n_step_sarsa(
+        edges, goalEdges, totalSteps, nLookahead, epsilon, gamma, alpha, pGen, pSwap, maxAge, plot=False
+    )
+    
+    # Simulate the trained policy
+    print(f"Simulating policy {i + 1}/{num_policies}...")
+    goal_success_counts, total_timesteps, edr_history = simulate_policy(
+        Q_table=Q,  # Your trained qTable object
+        edges=edges,
+        goal_edges=goalEdges,
+        p_swap=pSwap,
+        p_gen=pGen,
+        max_age=maxAge,
+        num_steps=100000,
+        plot=False
+    )
+    
+    # Store the results
+    policy_results.append({
+        'Q': Q,
+        'goal_success_counts': goal_success_counts,
+        'total_timesteps': total_timesteps,
+        'edr_history': edr_history
+    })
+
+# Plot the simulation results for each policy
+plt.figure(figsize=(10, 6))
+colors = plt.cm.viridis(np.linspace(0, 1, num_policies))  # Generate a color map for the policies
+line_styles = ['-', '--', '-.', ':']  # Different line styles for goals
+
+for i, result in enumerate(policy_results):
+    for j, (goal, edr) in enumerate(result['edr_history'].items()):
+        plt.plot(range(len(edr)), edr, label=f'Policy {i+1}, Goal {goal}', color=colors[i], linestyle=line_styles[j % len(line_styles)])
+
+plt.title('EDR History for Each Policy')
+plt.xlabel('Steps')
+plt.ylabel('EDR (successes/step)')
+plt.legend()
+plt.grid(True)
+plt.show()
