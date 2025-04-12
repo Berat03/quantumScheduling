@@ -155,7 +155,6 @@ def min_max_fairness(edrs):
     if max_val == 0:
         return 0.0
     return min_val / max_val
-
 def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, plot=True):
     current_state = [(edge, -1) for edge in edges]
     goal_success_counts = {goal: 0 for goal in goal_edges}
@@ -164,6 +163,7 @@ def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_step
 
     jain_history = []
     min_max_history = []
+    max_min_history = []
     throughput_history = []
 
     for step in range(num_steps):
@@ -193,13 +193,16 @@ def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_step
 
         throughput = sum(current_edrs.values())
         fairness = jains_index(current_edrs)
+        minmax = min_max_fairness(current_edrs)
+        maxmin = min(current_edrs.values())
 
         throughput_history.append(throughput)
         jain_history.append(fairness)
-        min_max_history.append(min_max_fairness(current_edrs))
+        min_max_history.append(minmax)
+        max_min_history.append(maxmin)
 
     if plot:
-        fig, axs = plt.subplots(4, 1, figsize=(12, 16))
+        fig, axs = plt.subplots(5, 1, figsize=(12, 20))
 
         for goal in goal_edges:
             axs[0].plot(edr_history[goal], label=f'Goal {goal}')
@@ -213,50 +216,59 @@ def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_step
         axs[1].plot(jain_history, color='purple')
         axs[1].set_title("Jain's Fairness Index Over Time")
         axs[1].set_xlabel('Timestep')
-        axs[1].set_ylabel('Jain Index')
+        axs[1].set_ylabel("Jain's Index")
         axs[1].grid(True)
         axs[1].set_ylim(0, 1.05)
 
         axs[2].plot(min_max_history, color='green')
         axs[2].set_title("Min-Max Fairness Over Time")
         axs[2].set_xlabel('Timestep')
-        axs[2].set_ylabel('Min / Max EDR')
+        axs[2].set_ylabel("Min / Max EDR")
         axs[2].grid(True)
         axs[2].set_ylim(0, 1.05)
 
-        axs[3].plot(throughput_history, jain_history, color='darkred', alpha=0.8)
-        axs[3].set_title("Pareto Curve: Throughput vs Jain's Fairness")
-        axs[3].set_xlabel("Total Throughput (Sum of EDRs)")
-        axs[3].set_ylabel("Jain's Index")
+        axs[3].plot(max_min_history, color='blue')
+        axs[3].set_title("Max-Min Fairness Over Time")
+        axs[3].set_xlabel('Timestep')
+        axs[3].set_ylabel("Min Goal EDR")
         axs[3].grid(True)
-        axs[3].set_xlim(0, max(throughput_history) * 1.1)
         axs[3].set_ylim(0, 1.05)
+
+        axs[4].plot(throughput_history, jain_history, color='darkred', alpha=0.8)
+        axs[4].set_title("Pareto Curve: Throughput vs Jain's Fairness")
+        axs[4].set_xlabel("Total Throughput (Sum of EDRs)")
+        axs[4].set_ylabel("Jain's Index")
+        axs[4].grid(True)
+        axs[4].set_xlim(0, max(throughput_history) * 1.1)
+        axs[4].set_ylim(0, 1.05)
 
         plt.tight_layout()
         plt.show()
 
-    return goal_success_counts, total_timesteps, edr_history, jain_history, min_max_history, throughput_history
-
+    return goal_success_counts, total_timesteps, edr_history, jain_history, min_max_history, throughput_history, max_min_history
 
 def validate_policy_simulation(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, num_simulations, seed=27, plot=True, window=1000):
     all_edr_histories = []
     all_jain_histories = []
     all_min_max_histories = []
+    all_max_min_histories = []
     all_throughput_histories = []
 
     final_edr_means = []
     final_jains = []
     final_min_max = []
+    final_max_min = []
 
     for sim in range(num_simulations):
         random.seed(seed + sim)
-        _, _, edr_history, jain_history, min_max_history, throughput_history = simulate_policy(
+        _, _, edr_history, jain_history, min_max_history, throughput_history, max_min_history = simulate_policy(
             Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, plot=False
         )
 
         all_edr_histories.append(edr_history)
         all_jain_histories.append(jain_history)
         all_min_max_histories.append(min_max_history)
+        all_max_min_histories.append(max_min_history)
         all_throughput_histories.append(throughput_history)
 
         final_edr_per_goal = {
@@ -265,14 +277,17 @@ def validate_policy_simulation(Q_table, edges, goal_edges, p_swap, p_gen, max_ag
         total_throughput = sum(final_edr_per_goal.values())
         final_jain = jains_index(final_edr_per_goal)
         final_minmax = min_max_fairness(final_edr_per_goal)
+        final_maxmin = min(final_edr_per_goal.values())
 
         final_edr_means.append(total_throughput)
         final_jains.append(final_jain)
         final_min_max.append(final_minmax)
+        final_max_min.append(final_maxmin)
 
     mean_final_edr = np.mean(final_edr_means)
     mean_final_jain = np.mean(final_jains)
     mean_final_min_max = np.mean(final_min_max)
+    mean_final_max_min = np.mean(final_max_min)
 
     mean_final_edrs_by_goal = {
         goal: np.mean([np.mean(edr_history[goal][-window:]) for edr_history in all_edr_histories])
@@ -283,10 +298,223 @@ def validate_policy_simulation(Q_table, edges, goal_edges, p_swap, p_gen, max_ag
         mean_final_edrs_by_goal,
         mean_final_jain,
         mean_final_min_max,
+        mean_final_max_min,
         all_throughput_histories,
         all_jain_histories
     )
 
+def run_policy_experiments(
+    train_policy_fn,
+    policy_name,
+    edges,
+    goal_edges,
+    p_swap,
+    p_gen,
+    max_age,
+    num_runs=10,
+    num_steps=30000,
+    num_simulations=20,
+    train_kwargs={},
+    validate_kwargs={},
+    plot=False
+    ):
+    
+    final_edrs_by_goal = {goal: [] for goal in goal_edges}
+    final_jains = []
+    final_minmax = []
+    final_maxmin = []
+    all_throughput_histories = []
+    all_jain_histories = []
 
+    for seed in range(num_runs):
+        print(f"\n=== {policy_name} Policy Training Run {seed + 1} ===")
+        random.seed(seed)
+        np.random.seed(seed)
 
+        Q_table = train_policy_fn(
+            edges=edges,
+            goal_edges=goal_edges,
+            p_swap=p_swap,
+            p_gen=p_gen,
+            max_age=max_age,
+            seed=seed,
+            **train_kwargs
+        )
+
+        results = validate_policy_simulation(
+            Q_table=Q_table,
+            edges=edges,
+            goal_edges=goal_edges,
+            p_swap=p_swap,
+            p_gen=p_gen,
+            max_age=max_age,
+            num_steps=num_steps,
+            num_simulations=num_simulations,
+            plot=False,
+            seed=seed,
+            **validate_kwargs
+        )
+
+        mean_final_edrs_by_goal, mean_final_jain, mean_final_min_max, mean_final_max_min, throughput_histories, jain_histories = results
+
+        for goal in goal_edges:
+            final_edrs_by_goal[goal].append(mean_final_edrs_by_goal[goal])
+
+        final_jains.append(mean_final_jain)
+        final_minmax.append(mean_final_min_max)
+        final_maxmin.append(mean_final_max_min)
+        all_throughput_histories.append(throughput_histories)
+        all_jain_histories.append(jain_histories)
+
+    # === Optional Plotting ===
+    if plot:
+        print('PLOTTING')
+        num_policies = num_runs
+        throughputs = [
+            sum(final_edrs_by_goal[goal][i] for goal in goal_edges)
+            for i in range(num_policies)
+        ]
+
+        fig, axs = plt.subplots(1, 3, figsize=(21, 5))
+
+        # --- Plot 1: EDR per goal ---
+        for goal in goal_edges:
+            axs[0].plot(final_edrs_by_goal[goal], marker='o', label=f"Goal {goal}")
+        axs[0].set_title("Mean Final EDR per Goal")
+        axs[0].set_xlabel("Policy Run")
+        axs[0].set_ylabel("Final EDR")
+        axs[0].set_ylim(0, 1)
+        axs[0].legend()
+        axs[0].grid(True)
+
+        # --- Plot 2: Fairness Metrics ---
+        axs[1].plot(final_jains, marker='o', label="Jain's Index", color='purple')
+        axs[1].plot(final_minmax, marker='s', label='Min-Max Fairness', color='green')
+        axs[1].plot(final_maxmin, marker='^', label='Max-Min Fairness', color='blue')
+        axs[1].set_title("Fairness Metrics Across Policies")
+        axs[1].set_xlabel("Policy Run")
+        axs[1].set_ylabel("Fairness Value")
+        axs[1].set_ylim(0, 1.05)
+        axs[1].legend()
+        axs[1].grid(True)
+
+        # --- Plot 3: Pareto Front ---
+        axs[2].scatter(throughputs, final_jains, color='darkred', alpha=0.7, s=60)
+        axs[2].set_title("Pareto Front: Throughput vs Jain's Index")
+        axs[2].set_xlabel("Total Throughput (Sum of EDRs)")
+        axs[2].set_ylabel("Jain's Index")
+        axs[2].set_xlim(0, max(throughputs) + 0.1)
+        axs[2].set_ylim(0, 1.05)
+        axs[2].grid(True)
+
+        plt.suptitle(f"{policy_name} Policy Results", fontsize=16)
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.show()
+
+    return {
+        "edrs": final_edrs_by_goal,
+        "jains": final_jains,
+        "minmax": final_minmax,
+        "maxmin": final_maxmin,
+        "throughputs": all_throughput_histories,
+        "jain_histories": all_jain_histories
+    }
+    
+def compare_policies_across_param(
+    policy_name,
+    policy_train_fn,
+    param_name,          # 'pSwap' or 'pGen'
+    param_values,        # list of values to sweep
+    edges,
+    goal_edges,
+    p_gen,
+    p_swap,
+    max_age,
+    train_kwargs={},
+    validate_kwargs={},
+    plot=True,
+    num_runs=5,
+    num_steps=10000,
+    num_simulations=10):
+    assert param_name in ['pGen', 'pSwap'], "param_name must be 'pGen' or 'pSwap'"
+
+    all_results = {}
+
+    for param_val in param_values:
+        print(f"\n=== Evaluating {policy_name} for {param_name} = {param_val} ===")
+
+        # Choose which param to vary
+        curr_p_gen = param_val if param_name == 'pGen' else p_gen
+        curr_p_swap = param_val if param_name == 'pSwap' else p_swap
+
+        results = run_policy_experiments(
+            train_policy_fn=policy_train_fn,
+            policy_name=f"{policy_name} ({param_name}={param_val})",
+            edges=edges,
+            goal_edges=goal_edges,
+            p_gen=curr_p_gen,
+            p_swap=curr_p_swap,
+            max_age=max_age,
+            num_runs=num_runs,
+            num_steps=num_steps,
+            num_simulations=num_simulations,
+            train_kwargs=train_kwargs,
+            validate_kwargs=validate_kwargs,
+            plot=False  # Plot later all together
+        )
+        all_results[param_val] = results
+
+    # === Plot Results Across Parameter Sweep ===
+    if plot:
+        fig, axs = plt.subplots(1, 4, figsize=(28, 5))
+
+        # Plot 1: Jain's Index per run
+        for val in param_values:
+            jains = all_results[val]['jains']
+            axs[0].plot(jains, marker='o', label=f"{param_name}={val}")
+        axs[0].set_title(f"Jain's Fairness Across {param_name} Values")
+        axs[0].set_xlabel("Run")
+        axs[0].set_ylabel("Jain's Index")
+        axs[0].legend()
+        axs[0].grid(True)
+
+        # Plot 2: Min-Max Fairness per run
+        for val in param_values:
+            minmax = all_results[val]['minmax']
+            axs[1].plot(minmax, marker='s', label=f"{param_name}={val}")
+        axs[1].set_title(f"Min-Max Fairness Across {param_name} Values")
+        axs[1].set_xlabel("Run")
+        axs[1].set_ylabel("Min / Max EDR")
+        axs[1].legend()
+        axs[1].grid(True)
+
+        # Plot 3: Throughput vs Jain's Index (Pareto)
+        for val in param_values:
+            jains = all_results[val]['jains']
+            throughputs = [
+                sum(all_results[val]['edrs'][goal][i] for goal in goal_edges)
+                for i in range(num_runs)
+            ]
+            axs[2].scatter(throughputs, jains, label=f"{param_name}={val}", s=60)
+        axs[2].set_title(f"Pareto Curve: Throughput vs Jain's Fairness")
+        axs[2].set_xlabel("Total Throughput")
+        axs[2].set_ylabel("Jain's Index")
+        axs[2].legend()
+        axs[2].grid(True)
+
+        # Plot 4: EDR per goal, per value
+        for goal in goal_edges:
+            for val in param_values:
+                edrs = all_results[val]['edrs'][goal]
+                axs[3].plot(edrs, marker='o', label=f"Goal {goal}, {param_name}={val}")
+        axs[3].set_title("EDR per Goal")
+        axs[3].set_xlabel("Run")
+        axs[3].set_ylabel("Final EDR")
+        axs[3].legend(fontsize=8)
+        axs[3].grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+    return all_results
 
