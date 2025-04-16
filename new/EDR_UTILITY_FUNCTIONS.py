@@ -23,7 +23,7 @@ def min_max_fairness(edrs):
 def rolling_average(data, window):
     return np.convolve(data, np.ones(window)/window, mode='valid')
 
-def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, edr_window_size=100, bin_size=0.05, plot=True):
+def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, bin_size, edr_window_size=100, plot=True):
     raw_state = [(edge, -1) for edge in edges]
     goal_success_counts = {goal: 0 for goal in goal_edges}
     recent_goal_history = {goal: [] for goal in goal_edges}  # Rolling window
@@ -51,6 +51,10 @@ def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_step
             if q_val > best_score:
                 best_score = q_val
                 best_action = action
+        unseen = not Q_table.has_seen(current_state, action)
+        if unseen:
+            print("Unseen state-action during simulation!")
+            print(current_state, action)
 
         action_taken = best_action != ([], None)
         action_ratio_history.append(1.0 if action_taken else 0.0)
@@ -777,3 +781,8 @@ class qTable:
     def set_q_value(self, state, action, value):
         key = (self.get_state_key(state), self.get_action_key(action))
         self.q_values[key] = value
+        
+    def has_seen(self, state, action):
+        key = (self.get_state_key(state), self.get_action_key(action))
+        return key in self.q_values
+
