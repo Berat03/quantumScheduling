@@ -310,7 +310,7 @@
 \usepackage[linesnumbered,ruled,vlined]{algorithm2e}
 \usepackage{amsmath}
 \usepackage{amsfonts}
-
+\usepackage{booktabs}
 % *** Do not adjust lengths that control margins, column widths, etc. ***
 % *** Do not use packages that alter fonts (such as pslatex).         ***
 
@@ -340,8 +340,10 @@ Board of Examiners in the Department of Computer Science, Durham University
 {Shell \MakeLowercase{\textit{et al.}}}
 
 \IEEEtitleabstractindextext{
-\begin{abstract} As quantum networks grow in scale and complexity, ensuring fair access to entanglement becomes a critical challenge — especially under the probabilistic, ephemeral nature of quantum resources. This paper explores fairness-aware entanglement scheduling in multi-user quantum networks, where naive policies can lead to persistent user starvation. We model the problem as a Markov Decision Process and apply reinforcement learning techniques—including Q-learning, Value Iteration, and N-step SARSA — to dynamically manage entanglement swapping under memory constraints and stochastic link behavior. Our approach incorporates a log-ratio fairness reward function based on the historical Entanglement Distribution Rate (EDR), sensitive to the temporal fragility of entanglement. Through simulation on various topologies and parameter settings, we demonstrate that reinforcement learning policies can significantly improve runtime fairness with minimal impact on efficiency. These findings highlight the viability of adaptive scheduling strategies in future quantum network deployments and lay the groundwork for more equitable quantum communication infrastructures. 
+\begin{abstract}
+As quantum networks scale, ensuring fair and timely access to entanglement becomes increasingly challenging—particularly due to the probabilistic and short-lived nature of quantum resources. This paper explores fairness-aware entanglement scheduling in multi-user quantum networks, where greedy or throughput-maximizing policies can lead to persistent user starvation. We model the problem as a Markov Decision Process (MDP) and apply reinforcement learning techniques—including Q-learning, Value Iteration, and N-step SARSA—to dynamically manage entanglement swapping under memory constraints and stochastic link behaviour. Our approach incorporates a log-ratio fairness reward based on the historical Entanglement Distribution Rate (EDR), designed to reflect the temporal fragility of entanglement. Through simulations on structured network topologies and varying physical parameters, we show that learning-based policies substantially improve runtime fairness with minimal efficiency loss. These results highlight the potential of adaptive control strategies in future quantum networks, laying the foundation for more equitable, large-scale quantum communication systems.
 \end{abstract}
+
 
 \begin{IEEEkeywords} 
 Network modeling, Quantum computing, Reinforcement learning, Scheduling 
@@ -382,111 +384,134 @@ Network modeling, Quantum computing, Reinforcement learning, Scheduling
 % \IEEEraisesectionheading puts \section within a raised box.
 
 %% --------------------------------------------- DO NOT CHANGE --------------------------------
-\subsection{Introduction}
-\IEEEPARstart{Q}{uantum} networks are poised to revolutionize how information is transmitted, processed, and secured. These networks connect quantum devices via entangled qubits, enabling protocols that leverage fundamentally non-classical phenomena like teleportation and entanglement. Quantum networks allow distributed parties to exchange quantum states or entangled qubits across long distances. This supports applications like QKD distributed quantum computing, and secure communication \cite{bennett1984quantum}. However, unlike classical signals, quantum states are fragile and cannot be cloned, observed without disturbance, or reliably relayed.
+\subsection{Introduction}  
+\IEEEPARstart{T}{he} emergence of quantum networks is poised to revolutionize how information is transmitted, processed, and secured. These systems connect quantum devices via entangled qubits—pairs of quantum bits whose states are intrinsically linked, such that measuring one instantaneously affects the other. This enables a range of non-classical protocols rooted in uniquely quantum phenomena. Quantum networks allow distributed parties to exchange quantum states or entangled qubits across long distances. This supports applications like Quantum Key Distribution (QKD) \cite{bennett1984quantum}, which enables provably secure communication, as well as distributed quantum computing and other privacy-preserving tasks. However, unlike classical signals, quantum states are fragile and cannot be cloned, observed without disturbance, or reliably relayed.
 
-One of the most critical challenges is resource allocation: specifically, how to fairly distribute entanglement among competing users when quantum links are unreliable, memory is limited, and qubits are short-lived. Unlike classical bandwidth or buffer space, entangled qubits degrade over time and cannot be duplicated or stored indefinitely. Without fairness-aware scheduling, some users may be perpetually excluded — leading to resource under-utilization or application failure.
+While still in their infancy, quantum networks and computing platforms are already being tested in small-scale deployments. This surge in development is partly driven by the threat of "store now, decrypt later" attacks, where adversaries collect encrypted classical data now and decrypt it later using quantum computers—highlighting the need for unobservable, quantum-secured communication that is fundamentally resistant to eavesdropping.
 
-To address this, we frame entanglement scheduling as a dynamic control problem under uncertainty and apply reinforcement learning (RL) to develop adaptive policies that account for the stochastic and temporal constraints unique to quantum systems.
+One of the most critical challenges is resource allocation: specifically, how to fairly distribute entanglement among competing users when quantum links are unreliable, memory is limited, and qubits are short-lived. Quantum links and memories—typically implemented using photons or ion traps—are highly sensitive to noise, thermal fluctuations, and imperfect detection, making them prone to rapid decoherence and failure. Unlike classical bandwidth or buffer space, entangled qubits degrade over time and cannot be duplicated or stored indefinitely. Without fairness-aware scheduling, some users may be perpetually excluded—leading to resource under-utilization or application failure.
+
+To address this, we frame entanglement scheduling as a dynamic control problem under uncertainty and apply reinforcement learning (RL) to develop adaptive policies—i.e., strategies that map observed network states to actions—that account for the stochastic and temporal constraints unique to quantum systems.
 
 \subsection{Quantum Phenomena}
 At the heart of quantum communication lies the qubit—the quantum analogue of a classical bit. Unlike a binary 0 or 1, a qubit exists in a superposition of both states:
 \[
 |\psi\rangle = \alpha|0\rangle + \beta|1\rangle, \quad \text{with } |\alpha|^2 + |\beta|^2 = 1
 \]
-Here, \(\alpha\) and \(\beta\) are complex amplitudes, and the act of measurement collapses the qubit into either \( |0\rangle \) or \( |1\rangle \), probabilistically. Photons are common physical implementations of qubits, with their polarization (horizontal/vertical) representing the computational basis states.
+Here, \(\alpha\) and \(\beta\) are complex amplitudes representing probability amplitudes for each basis state, and the act of measurement collapses the qubit into either \( |0\rangle \) or \( |1\rangle \), probabilistically. This inherent uncertainty is not due to lack of knowledge, but a fundamental feature of quantum mechanics—making quantum information both powerful and fragile. Photons are common physical implementations of qubits, with their polarization (horizontal/vertical) representing the computational basis states.
 
 A fundamental quantum resource is \textbf{entanglement}, where two qubits become linked such that measuring one instantly determines the state of the other—regardless of distance. These “Bell pairs” \cite{bell1964epr} form the foundation of quantum communication protocols, allowing for secure, correlated outcomes between remote nodes.
+
+This phenomenon is deeply connected to the \textbf{no-cloning theorem}, which states that an unknown quantum state cannot be copied or duplicated. Unlike classical bits, which can be freely read and replicated, any attempt to clone a qubit inevitably disturbs its state—making passive eavesdropping or replication fundamentally impossible in a quantum setting. This fragility underscores many of the scheduling and fairness challenges explored in this work.
 
 Another crucial operation is quantum \textbf{teleportation}, which allows the state of a qubit to be transmitted from one node to another using a shared entangled pair and classical communication. The original qubit is destroyed in the process, and its exact state is reconstructed at the destination—without physically transferring the particle. This technique is essential for long-distance quantum communication and highlights the importance of efficient entanglement distribution in quantum networks.
 
 
+
 \subsection{Quantum Networking}
+
 Due to the \textbf{no-cloning theorem}, quantum signals cannot be amplified like classical ones. To extend communication range, quantum networks rely on \textbf{repeaters} that perform \textbf{entanglement swapping}—a technique where intermediate nodes entangle two remote parties by performing a local Bell measurement on their linked qubits.
+
+Quantum communication hardware—such as entangled photon sources and quantum memories—is also becoming compatible with existing optical fibre infrastructure. This allows early-stage deployments to leverage today's networks while exploring future upgrades.
+
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.8\linewidth]{paper/figures/basicSwapBell.jpg}
-  \caption{Entanglement swapping example between Alice, Bob and Carol - where we perform swapping.}
+  \caption{Entanglement swapping example between Alice, Bob and Carol—where we perform swapping.}
   \label{fig:my_plot1}
 \end{figure}
 
-A key challenge in network design is \textbf{decoherence}: qubits are fragile and easily disturbed by interactions with their environment, which rapidly disrupts their quantum state. This fragility also underlies the \textbf{no-cloning theorem}: observing or copying a qubit requires interaction—typically with photons or electronic systems—which collapses its quantum state and irreversibly alters the information. To mitigate the effects of noise and loss, techniques like \textbf{entanglement purification} are used to distill high-fidelity entangled pairs from noisy ones, improving the reliability of quantum communication [CITE PURIFICATION].
+A key challenge in network design is \textbf{decoherence}: qubits are highly sensitive to their environment, and even minimal interactions can disrupt their state. This quantum fragility makes long-distance communication difficult, as entangled qubits degrade over time and cannot be refreshed or cloned. To mitigate this, techniques like \textbf{entanglement purification} are used to improve the quality of distributed qubits by consuming multiple noisy pairs to distil a smaller number of high-fidelity ones—where \textit{fidelity} refers to how closely a qubit state matches the ideal, intended one \cite{CITE PURIFICATION}.
 
-To address these issues, we discretize time into simulation steps, where each link ages and eventually decoheres. This abstraction enables realistic modeling of fidelity decay while simplifying the complexity of continuous-time quantum physics. Due to similar constraints, this also means that entanglement generation, storage and swapping are essentially probabilistic behaviors, as our physical implementations are not advanced enough yet to generate these deterministically - and this is one of the key challenges that underpins the focus of this paper. This also motivates \textbf{memory-aware protocols} that schedule entanglement use before qubits expire.
+Quantum networks are also expected to function as \textbf{hybrid systems} in conjunction with classical networks. Classical infrastructure provides the routing, timing, and signaling backbone for control operations like teleportation, measurement reporting, and scheduling. This makes hybrid architectures more feasible in the near term, particularly given the cost and infrastructure demands of fully quantum networks.
 
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/bsicNetworkswap.jpg}
-  \caption{Simple Line Network that performs a wait-swap policy with discrete time-step's and generation. }
-  \label{fig:my_plot2}
-\end{figure}
+Furthermore, quantum operations such as entanglement generation and swapping are fundamentally \textbf{probabilistic}, often limited by photon loss, imperfect gates, and memory decoherence. These low success rates severely limit scalability—for example, generating a 4-hop entangled path with 50\% per-link success yields just \(0.5^4 = 6.25\%\) overall success. To model this realistically, we discretize time into steps and introduce the concept of \textbf{entanglement age}, allowing links to persist across multiple timesteps before expiring. This abstraction enables delayed success and partial path reuse, and it captures the stochastic and fragile nature of entanglement without requiring full continuous-time quantum simulation. 
+
+These dynamics motivate the need for \textbf{memory-aware protocols} that can schedule entanglement use efficiently before decoherence occurs, and in a way that prioritizes long-term outcomes over immediate gains—particularly under uncertainty and contention.
 
 
 \subsection{Fairness in Networking}
-Fairness in networking means ensuring that all users have equitable access to resources—in classical systems, this might be bandwidth or time slots; in quantum systems, it's opportunities for entanglement. While classical fairness is often averaged over time, quantum fairness is fundamentally \textbf{temporal} — a missed opportunity cannot be recovered due to qubit decay.
+Fairness in networking means ensuring that all users have equitable access to resources—in classical systems, this might be bandwidth or time slots; in quantum systems, it's opportunities for entanglement. While classical fairness is often averaged over time, quantum fairness is fundamentally \textbf{temporal}—a missed opportunity cannot be recovered due to qubit decay. For instance, in classical systems, a user can eventually be served even if delayed. In contrast, a qubit that expires without being used is lost forever, making timely fairness critical.
 
-In multi-user networks, naive policies such as greedy routing or throughput maximization may result in \textit{starvation}, where some applications are consistently denied access due to lower success rates or unfavorable topology. This is illustrated in a quantum network in Figure~\ref{fig:starving}.
+In multi-user quantum networks, naive scheduling policies—such as \textit{greedy routing}, which always selects the locally optimal action without considering long-term outcomes, or pure throughput maximization—may result in \textit{starvation}—a condition where certain users are persistently denied access to entanglement due to lower success rates or network position. This is illustrated in Figure~\ref{fig:starving}, where one user is consistently excluded due to shared path contention.
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.8\linewidth]{paper/figures/starvation.jpg}
-  \caption{An example of starvation under a greedy, wait-swap scheduling policy. User A us starved due it's contention for edge 4-5 with user B, which has a far shorter path.}
+  \caption{An example of starvation under a greedy, wait-swap scheduling policy. User A is starved due to contention over edge 4–5 with User B, whose shorter path is consistently prioritized.}
   \label{fig:starving}
 \end{figure}
 
-Future networks will need to balance fairness with other goals such as fidelity, latency, and efficiency. This calls for adaptive scheduling strategies that dynamically respond to network state, link reliability, and application needs. Our work focuses specifically on fairness at the entanglement swapping layer, although related fairness questions exist at the network switch \cite{thiru2025optimal} and purification levels.
+Future networks will need to balance fairness with other goals such as fidelity, latency, and efficiency. While classical networks already achieve this through a mature infrastructure and a wide array of fairness mechanisms, these tools do not translate well to quantum settings due to their temporal fragility and probabilistic constraints. This calls for adaptive scheduling strategies that dynamically respond to network state, link reliability, and application needs. Our work focuses specifically on fairness at the entanglement swapping layer, although related fairness challenges exist at the network switch \cite{thiru2025optimal} and purification levels.
 
 \subsection{Reinforcement Learning}
-Quantum networks introduce dynamic, uncertain environments where actions---such as entanglement swaps---have delayed and probabilistic outcomes. These properties make it difficult to rely on simple heuristics or greedy policies, which only consider immediate outcomes. Instead, \textbf{Reinforcement Learning (RL)} offers a powerful framework for learning long-term strategies through trial and error, without requiring explicit knowledge of the system’s behavior.
+Reinforcement learning is particularly well-suited to quantum networks, which exhibit dynamic, uncertain behavior where actions—such as entanglement swaps—have delayed and probabilistic outcomes. In such environments, simple heuristics or greedy strategies that only consider immediate outcomes often perform poorly. Instead, learning-based methods must reason over future possibilities to ensure timely, fair, and efficient entanglement delivery.
 
-We model the scheduling problem as a \textbf{Markov Decision Process (MDP)}, where each state $s \in \mathcal{S}$ represents the current entanglement state of the network, and each action $a \in \mathcal{A}$ corresponds to a potential entanglement swap. The agent's objective is to learn a policy $\pi(s) = a$ that maximizes the \textbf{expected cumulative discounted reward}:
+This work models the scheduling problem as a \textbf{Markov Decision Process (MDP)}—a formal framework for decision-making in stochastic environments. An MDP is defined by a set of states \( \mathcal{S} \), a set of actions \( \mathcal{A} \), a transition model that defines the probability of moving between states given an action, and a reward function that quantifies the immediate benefit of each action. Critically, MDPs satisfy the \textit{Markov property}, meaning the outcome of each decision depends only on the current state and action—not on the full history. 
+
 
 \[
 G_t = \mathbb{E} \left[ \sum_{k=0}^{\infty} \gamma^k R_{t+k+1} \,\middle|\, S_t = s \right]
 \]
 
-Here, $\gamma \in [0,1)$ is the \textit{discount factor}, weighting future rewards less than immediate ones. Unlike greedy strategies that optimize only the next step, this formulation encourages policies that account for long-term consequences.
+Here, \( \gamma \in [0,1) \) is the \textit{discount factor}, which prioritizes near-term rewards over distant ones. This formulation explicitly encourages long-term planning rather than myopic, one-step decisions.
 
-Once learned, these policies can be deployed in real-time to guide entanglement scheduling at repeaters or network controllers---adapting to varying traffic loads, link reliability, and memory constraints.
+Learned policies can then be deployed in real-time to guide entanglement scheduling at repeaters or quantum network controllers, adapting to changes in memory availability, link reliability, and traffic demands. Such approaches are essential for systems where entanglement is both ephemeral and costly to produce—making foresight critical for fairness and efficiency.
 
-Reinforcement learning is especially well-suited to quantum networks because it naturally handles uncertainty, sparse rewards, and temporal fragility---making it an ideal fit for fairness-aware scheduling in this setting.
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/bsicNetworkswap.jpg}
+  \caption{Simple line network that performs a wait-swap policy under discrete time steps and probabilistic generation.}
+  \label{fig:my_plot2}
+\end{figure}
+
 
 \subsection{Research Focus}
+This work investigates how to design \textbf{fair entanglement scheduling policies} in multi-user quantum networks—specifically, how to balance equity and efficiency in environments with probabilistic resources and strict temporal constraints. In classical systems, fairness can be evaluated retrospectively; however, in quantum systems, entanglement opportunities decay rapidly due to decoherence, making delayed fairness fundamentally insufficient.
 
-This work investigates how to design \textbf{fair entanglement scheduling policies} in multi-user quantum networks, with a focus on balancing equity and efficiency under constrained, probabilistic resources. Unlike classical systems, where fairness can be averaged over long time windows, quantum fairness is inherently \textbf{temporal} — opportunities expire rapidly due to decoherence, making delayed fairness insufficient. Prior research has largely emphasized throughput or fidelity, often from a single-user or system-optimal perspective, which risks excluding disadvantaged users and causing long-term starvation.
+Most existing work has focused on maximizing throughput or fidelity, often under single-user assumptions or system-optimal objectives. These approaches risk marginalizing users with lower success rates or less favorable topological placement, leading to long-term starvation.
 
-To address this, we frame entanglement scheduling as a Markov Decision Process and apply three reinforcement learning approaches — \textbf{Q-learning}, \textbf{Value Iteration}, and \textbf{N-step SARSA} — to learn dynamic, fairness-aware policies. These algorithms make real-time decisions about entanglement swapping, based on the current network state, memory availability, and probabilistic link behavior.
+To address this, the entanglement scheduling problem is framed as a Markov Decision Process (MDP), and we apply three reinforcement learning strategies—\textbf{Q-learning}, \textbf{Value Iteration}, and \textbf{N-step SARSA}—to learn dynamic, fairness-aware policies. These agents make real-time decisions based on entanglement availability, memory constraints, and probabilistic link behavior.
 
-We introduce a \textbf{log-ratio fairness reward} function that dynamically penalizes deviations from historical access rates. This encourages equitable access without hard-coding priority rules, enabling policies to adapt to transient imbalances and ensure timely entanglement delivery across all users. Unlike global fairness metrics that assess equity in hindsight, our reward function embeds fairness directly into policy learning—critical for quantum systems where missed opportunities are irreversible.
+We introduce a \textbf{log-ratio fairness reward}, which compares a user’s instantaneous delivery to their historical average. This structure promotes equitable treatment by rewarding delivery to underserved users and disincentivizing monopolization—embedding fairness directly into the learning process rather than as a post hoc metric.
 
-To isolate the policy-level fairness challenge, we abstract away lower-layer processes like purification and noise modeling, focusing instead on mid-scale, repeatable topologies representative of early quantum networks. Although our current implementation assumes global knowledge and control, it serves as a hybrid quantum-classical architecture, providing a stepping stone toward scalable, distributed implementations. Future work can expand this model to include richer physical constraints, decentralized policies, and more diverse network structures.
+To isolate the scheduling challenge, we abstract away lower-layer effects such as purification and physical noise. Our simulation environment models mid-scale, structured topologies representative of early-stage quantum networks. While our current approach assumes centralized observability, it aligns with hybrid quantum-classical architectures and offers a foundation for future work on scalable, decentralized protocols incorporating richer physical constraints and topological diversity.
+
 
 \subsection{Summary of Contribution}
+This work explores the unique challenges of fairness-aware entanglement scheduling in multi-user quantum networks, where resource constraints, probabilistic link behaviour, and temporal fragility create fundamentally different scheduling dynamics from classical systems.
 
-This paper makes the following key contributions [REWRITE AFTER EVAL]:
+We make the following key contributions:
 
 \begin{itemize}
-    \item We propose a fairness-aware reward function based on a log-ratio of instantaneous to historical entanglement delivery rates, enabling reinforcement learning agents to adapt to temporal imbalances and prevent user starvation.
-    
-    \item We formulate the entanglement scheduling problem as a Markov Decision Process and implement three reinforcement learning strategies — \textbf{Q-learning}, \textbf{Value Iteration}, and \textbf{N-step SARSA} — capable of operating under dynamic, probabilistic, and memory-constrained network conditions.
-    
-    \item We design and evaluate runtime fairness metrics tailored to quantum systems, capturing the temporal fragility of entanglement and allowing policy evaluation beyond standard throughput or efficiency measures.
-    
-    \item We conduct empirical simulations across representative network topologies, analyzing the trade-offs between fairness and efficiency under varying physical parameters (\(p_{\text{gen}}, p_{\text{swap}}\)), and demonstrating how learning-based policies can outperform static heuristics.
+    \item We propose a log-ratio-based fairness reward function that dynamically penalizes imbalances in entanglement delivery, enabling reinforcement learning agents to adapt in real time and mitigate user starvation under stochastic conditions.
+
+    \item We formalize the entanglement scheduling task as a Markov Decision Process and implement three reinforcement learning strategies—\textbf{Q-learning}, \textbf{Value Iteration}, and \textbf{N-step SARSA}—capable of learning effective policies in environments with memory constraints and delayed, probabilistic outcomes.
+
+    \item We introduce fairness metrics tailored to quantum systems, with a focus on runtime fairness, which reflects the irrecoverable nature of missed entanglement opportunities.
+
+    \item We empirically evaluate our models across structured network topologies and physical parameter regimes (\(p_{\text{gen}}, p_{\text{swap}}\)), demonstrating how learning-based policies outperform greedy baselines and adapt to non-stationary, resource-limited environments.
 \end{itemize}
 
-Together, these contributions demonstrate the viability of adaptive, fairness-aware entanglement scheduling in early-stage quantum networks. Our framework offers a reproducible testbed and conceptual foundation for developing more equitable control strategies in future hybrid and distributed quantum architectures.
+Through this process, we identify several key characteristics that distinguish fairness scheduling in quantum networks from classical analogues—such as the non-recoverability of missed opportunities, the compounding impact of memory decay, and the need for anticipatory (rather than reactive) scheduling. Our framework provides both a reproducible evaluation pipeline and a conceptual foundation for building equitable scheduling strategies in hybrid and future distributed quantum network architectures.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\newpage
 \section{Related Work}
 \subsection{Fairness in Networking}
 Fairness plays a crucial role in modern computer networks, with particular emphasis on equitable resource distribution across multiple users. Depending on application requirements, fairness may mean strict equality, weighted prioritization, or utility-based optimization. These perspectives give rise to a range of algorithms and well-established metrics that define and enforce fairness.
 
 \subsubsection{Metrics}
-Jain’s Fairness Index quantifies the evenness of resource distribution numerically \cite{jain1984quantitative}, max-min fairness ensures that no flow can improve its allocation without reducing that of the most disadvantaged \cite{radunovic2007unified}, and proportional fairness strikes a balance between efficiency and equity \cite{kelly1997charging}. Utility-based models further generalize these approaches by optimizing for application-specific goals \cite{kuo2007utility}.
+Fairness in networking is typically formalized through metrics that quantify how evenly resources are allocated across users. Common examples include Jain’s Fairness Index \cite{jain1984quantitative}, max-min fairness \cite{radunovic2007unified}, and proportional fairness \cite{kelly1997charging}, each reflecting a different trade-off between equity and efficiency.
+
+Jain’s Index is valued for its simplicity and broad applicability but does not capture temporal starvation or path-specific disparities. Max-min fairness prioritizes the most disadvantaged users, ensuring strong guarantees but potentially at the cost of system-wide throughput. Proportional fairness offers a more balanced approach, allocating resources such that any change to improve one user’s allocation would result in a proportional loss to others.
+
+These models can all be interpreted under the general framework of $\alpha$-fairness \cite{mo2000alphafair}, which introduces a tunable parameter $\alpha$ to interpolate between fairness regimes: $\alpha=0$ corresponds to pure throughput maximization, $\alpha=1$ recovers proportional fairness, and $\alpha \to \infty$ approaches max-min fairness. This framework is particularly relevant in multi-tenant or resource-constrained quantum networks, where tuning the fairness-efficiency balance is crucial for sustained entanglement distribution.
+
+Utility-based formulations extend these ideas by incorporating application-specific goals, allowing systems to optimize for user-defined utility functions. However, their flexibility often requires prior knowledge and careful reward shaping, which can be difficult in environments with uncertainty, partial observability, or temporal decay—such as those found in quantum networks.
+
 
 \subsubsection{Applications \& Algorithms}
 Fairness principles underpin the design of many core networking algorithms. For example, Weighted Fair Queuing (WFQ) allocates bandwidth among competing flows proportionally, allowing higher-priority traffic to receive more resources while maintaining equity \cite{demers1990analysis}. Congestion control protocols like TCP Reno and TCP Cubic adjust flow rates based on packet loss, enabling decentralized fairness across competing connections \cite{ha2008cubic}. Fairness-aware scheduling is also critical in multi-tenant cloud environments, where resource allocation must balance performance with isolation to prevent monopolization by individual tenants \cite{danna2012practical}.
@@ -496,7 +521,19 @@ Fairness in networking often comes at the cost of reduced throughput or computat
 
 Many systems address this by adopting multi-objective optimization strategies, balancing fairness and efficiency. Reward shaping and Pareto-front optimization are common in machine learning, enabling adaptive trade-offs without fixed heuristics \cite{susan2020pareto}. $\alpha$-fairness offers a tunable framework for adjusting this balance \cite{mo2000alphafair}, and is especially relevant in quantum networks where both utility and equity matter.
 
+
+A common approach in fairness-aware reinforcement learning is to use a composite reward function of the form:
+\[
+R_t = \theta \cdot \text{Throughput}_t + (1 - \theta) \cdot \text{Fairness}_t
+\]
+where \( \theta \in [0, 1] \) adjusts the balance between total utility and equitable allocation. This formulation enables system designers to flexibly prioritize either high entanglement throughput (\( \theta = 1 \)) or runtime fairness (\( \theta = 0 \)), and is frequently employed in multi-tenant or multi-QoS environments that require tunable trade-offs.
+
+In this work, we do not adopt such a linear blending strategy. Instead, our reward function is based on proportional fairness—an \(\alpha\)-fairness formulation with \(\alpha = 1\)—which naturally embeds equity considerations without requiring an external weighting parameter. Moreover, we found that combining fairness and throughput as separate additive objectives can lead to unstable learning dynamics due to conflicting gradient signals and inconsistent reward scales. Our log-ratio utility function, by contrast, provides smoother gradients, interpretable incentives, and an inherently balanced trade-off between fairness and efficiency.
+
+
 A key distinction in literature is between \textit{final} and \textit{runtime} fairness. Final fairness considers overall distribution across time, while runtime fairness captures short-term imbalances or periods of starvation. In quantum settings—where entanglement decays and cannot be recovered—runtime fairness is critical. A policy that is fair on average may still allow prolonged inequity, underscoring the need for temporally-aware fairness metrics.
+
+
 
 \subsection{Quantum Networking}
 \subsubsection{Current Applications \& Research}
@@ -589,359 +626,475 @@ Analytical techniques from queuing theory and Markov models have also been appli
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \newpage
+
 \section{Problem Specification \& System Design}
+This section formalizes the quantum entanglement distribution problem as a reinforcement learning task and outlines the system used to develop and evaluate our RL scheduling policies. We model the environment as a MDP, define the key abstractions that simplify the physical-layer, and describe the scheduling rules, action semantics, and fairness-driven reward structure that shape agent behaviour.
 
-This section outlines the environment design and core abstractions used to model fairness-aware scheduling in quantum networks. We formalize the system as a Markov Decision Process (MDP), explain our assumptions and simplifications, and define the entanglement dynamics, action semantics, and reward structure guiding agent behavior.
+Our aim is to learn entanglement scheduling policies that balance fairness and throughput in stochastic quantum networks. To do so, we develop simulation-based environments and collect experimental data by training reinforcement learning agents under controlled conditions. These agents interact with the environment to generate quantitative performance metrics—such as Jain’s fairness index and delivery throughput—which we use to compare policies and understand trade-offs across different network settings and reward structures.
 
-\subsection{Environment Setup}
-To make this problem tractable and amenable to reinforcement learning (RL), we introduce several abstractions. These are designed to isolate the key challenges of entanglement generation, degradation, and scheduling—while maintaining computational feasibility.
+\subsection{Modelling Assumptions and Abstractions}
+\subsubsection*{Temporal and Observability Assumptions}
+We assume discrete-time operation ($t = 0, 1, 2, \ldots$) and model entanglement swaps as instantaneous. This abstraction decouples logical scheduling from real-world physical timescales, enabling synchronous updates and reducing the complexity of both learning and evaluation. It also simplifies temporal reasoning around multi-hop swaps, which complete atomically within a single step.
 
-\subsubsection{Assumptions}
-
-\begin{itemize}
-    \item \textbf{Discrete Time:} Time progresses in discrete intervals ($t = 0, 1, 2, \ldots$), decoupling simulation logic from real-world physical timescales.
-
-    \item \textbf{Full Observability:} Agents can access the full entanglement state of the network via classical communication, enabling centralized decision-making. Centralized observability simplifies coordination and enables fairness-aware decisions without the overhead of distributed policy learning or decentralized credit assignment.
-
-    \item \textbf{Homogeneous Parameters:} All links have the same entanglement generation probability ($p_{\text{gen}}$) and swap success rate ($p_{\text{swap}}$).
-\end{itemize}
+We further assume full global observability: the agent has complete, real-time access to the network’s entanglement state via classical communication. While idealized, this reflects the hybrid control architecture of emerging quantum networks, where classical channels coordinate quantum operations \cite{bennett1984quantum}. This design choice eliminates the need for decentralized credit assignment—a key challenge in multi-agent reinforcement learning that remains largely unexplored for quantum network scheduling—and is essential for embedding fairness-sensitive statistics (e.g., delivery rates) directly into the agent’s observation space.
 
 
-\subsubsection{Simplifications}
+These assumptions simplify the environment but are justified by the need for computational tractability and conceptual clarity. They allow us to isolate the core scheduling challenges without conflating them with physical-layer delays or observability limitations. While this makes the setting optimistic compared to real-world deployments, it provides a valid basis for evaluating fairness-aware policies under controlled and reproducible conditions.
 
-\begin{itemize}
-    \item \textbf{No Purification or Error Correction:} These physical-layer processes are excluded to focus on baseline scheduling dynamics. Purification and quantum error correction are crucial in practical deployments but introduce extra complexity at the physical layer—requiring fidelity modeling, gate errors, and additional memory tracking. By excluding these, we isolate the fairness and scheduling aspects of entanglement management, simplifying the environment for reinforcement learning. 
+\subsubsection*{Entanglement Modelling and Memory Constraints}
 
-    \item \textbf{No Multiplexing or Hybrid Routing:} Each edge holds at most one entanglement; routing decisions are deterministic and single-path.
+Each entangled link is represented by a discrete-valued age counter. At each timestep, links increment in age and are discarded if their age exceeds a predefined \texttt{maxAge}, simulating decoherence. Unlike real systems—where entanglement fidelity degrades over time—we assume a fixed swap success probability until expiration. This abstraction simplifies reasoning and preserves interpretability when analysing agent behaviour. Incorporating fidelity decay would expand the transition space and require policies to consider age-dependent success likelihoods, complicating analysis. Prior work has similarly abstracted purification and fidelity loss to emphasize coordination strategies \cite{inesta2023optimal}
 
-    \item \textbf{No Decoherence Modeling Beyond Aging:} Entanglement fidelity is approximated through a simple age-based cutoff model.
-\end{itemize}
+We restrict each edge to a single entangled qubit at a time, omitting support for multiplexed entanglement. This design choice aligns with our goal of studying foresight and fairness in reinforcement learning, rather than maximizing physical realism. It simplifies the action space and bounds the environment's state size. While our function approximation methods (see Section~\ref{sec:linearapprox}) address scalability, a smaller state space improves training stability and interpretability.
 
-
-\subsection{System Abstractions}
-
-\subsubsection{Time and Entanglement Modeling}
-
-Time progresses in discrete intervals. Each entangled link between two nodes is represented by an integer indicating its age in time steps, where \(-1\) denotes the absence of entanglement. Aging models the decoherence process: once a link exceeds a predefined threshold (\texttt{maxAge}), it is discarded.
-
-To properly capture fairness-sensitive behaviors and maintain the Markov property of the environment, we additionally encode fairness-related statistics directly into the agent's observation. This is a method seen in the ltierature, and amkese sense.. We do this by way of linear approximation, as to translate our continous state space of edrs into applcitable terms.
-Initally, we implemented this using binned EDRs however it seem the resolution was not sufficent for the sensiitivty and muliple difefernet otpologies and aprameters we applied.
-We use a linear approximation function..
-
-This augmentation ensures that the reward function—particularly those based on log-ratio fairness—is fully determined by the current state, thereby preserving the Markov property. Without including EDR bins in the state, the reward function would implicitly depend on historical data not observable in the state itself, violating the formal assumptions of Markov Decision Processes.
-
-This design choice was directly informed by early experimentation with value iteration, which revealed that purely structural representations of entanglement (e.g., edge ages alone) were insufficient to capture fairness-oriented rewards. Including binned EDRs as part of the state encoding enables the learning algorithm to reason about recent goal-specific performance and schedule accordingly. It also discretize a potentially continuous signal, making the state space tractable for tabular and Q-based methods without sacrificing fairness-awareness.
+The environment state is encoded using tuple-based representations, where each edge stores the current age of its entangled qubit. This compact representation captures quantum memory status efficiently and integrates directly with our linear feature encoding. To accelerate training in early experiments, we initially precomputed all possible transition outcomes—such as generation, failure, and age-based expiration—for each edge-age pair. While this significantly reduced simulation overhead, it was ultimately abandoned due to memory constraints in larger networks. Moreover, this optimization assumes static transition dynamics and would not generalize well to non-stationary settings where physical parameters change over time.
 
 
+\subsubsection*{Fairness Encoding and State Representation}
+
+To preserve the Markov property while enabling fairness-aware learning, we augment the agent’s observation with recent performance metrics, specifically entanglement delivery ratios (EDRs) for each goal. EDRs reflect the smoothed rate of successful deliveries over a fixed rolling window and form the sole historical component in our state representation, as they fully capture the statistics required by the reward function.
+
+We initially experimented with discretized bins of historical EDRs, but this approach lacked sufficient resolution—particularly in low-success environments, where changes in EDRs are subtle and highly sensitive to individual delivery events. These limitations were further exacerbated in sparse topologies with limited entanglement opportunities, where coarse representations could obscure periods of under-service to disadvantaged goals. To address this, we adopt a continuous, linear function approximation that directly encodes normalized EDRs into the state vector (see Section~\ref{sec:linearapprox}).
+
+We use a fixed-length rolling window rather than a global average to compute EDRs, ensuring fairness is assessed over a recent, bounded horizon. This design promotes \textit{temporal fairness}—that is, consistency of service across time—rather than merely equalizing delivery in the long run. The choice of window size controls the balance between responsiveness and stability: smaller windows react more quickly to imbalance but introduce volatility, while larger windows smooth fluctuations but delay recovery. In our experiments, we use window sizes of 100 and 1000, which align with simulated qubit lifetimes (\texttt{maxAge} between 1–10 timesteps). As noted in Section~\ref{sec:literatureLifetimes}, this corresponds to only a few nanoseconds to milliseconds of coherence time in real quantum hardware.
+
+Without this augmentation, the fairness-aware reward would depend on unobserved history, violating the Markov assumption and preventing effective reinforcement learning. Empirical results confirmed this limitation: early value iteration experiments using only structural features (e.g., entanglement ages) performed worse than greedy baselines, due to poor alignment between observed states, available actions, and the fairness-driven reward signal.
+
+\subsubsection*{Physical Simplifications and Routing Constraints}
+
+To isolate core scheduling dynamics, we abstract away several physical-layer mechanisms common in practical quantum networks. Specifically, we do not model purification or quantum error correction—techniques that enhance fidelity by combining low-quality links. While relevant for hardware performance, these add significant complexity without directly advancing our fairness-driven objectives. This abstraction, widely adopted in related work, ensures our results remain general and interpretable despite near-term advances in quantum hardware.
+
+We model entanglement generation and swapping using fixed, per-edge probabilities. At each timestep, an unoccupied edge attempts entanglement generation with probability \(p_{\text{gen}}\), while single-hop swaps succeed independently with probability \(p_{\text{swap}}\). These parameters serve as coarse proxies for hardware reliability—e.g., photon sources, detectors, and Bell-state measurement units. We fix them across time and topology to ensure a stationary environment, which improves learning stability and allows us to isolate the effects of scheduling decisions without entangling them with underlying hardware variability. While real-world systems may exhibit time-varying fidelity due to thermal drift or calibration error, this abstraction is consistent with prior work and avoids conflating hardware dynamics with fairness policy performance.
+
+Routing is also simplified: each goal path is fixed and known a priori, and swaps are only attempted when all required links are entangled. This removes the complexity of dynamic routing—a separate and open research challenge—and allows us to focus solely on entanglement coordination. In practice, routing is expected to be handled via classical control infrastructure, which is well-established and capable. This simplification aligns with hybrid quantum-classical architectures and is consistent with prior work \cite{inesta2023optimal}.
+
+If multiple asymmetric paths exist for the same goal, our fairness-based reward function resolves conflicts implicitly by prioritizing under-served goals (see Section~\ref{sec:rewardFunction}), ensuring equitable delivery without requiring explicit path selection logic.
+
+This abstraction aligns with our broader design goal: treating quantum entanglement distribution as a fairness-aware scheduling problem, rather than a routing problem. Much like the layered abstraction in the classical 7 Layer OSI model, where routing is handled independently of transport or application logic, we assume that future quantum networks will adopt similar modularity to support scalability and policy portability. By fixing paths, we isolate the fairness-efficiency trade-off without conflating it with routing heuristics or path optimization. It is also worth noting that in nested-swap scenarios, agents effectively perform implicit route selection—progressing through whichever sub-paths become available and are optimal. This emergent behaviour supports our decision to decouple explicit routing from policy learning, while still allowing adaptive delivery paths to form organically.
 
 
-\subsubsection{Memory and Observability}
-Aging also indirectly models quantum memory constraints: each entangled link is associated with a lifetime, and must be used before exceeding a predefined cutoff. Specifically, if an entangled link on edge \( e \) has age \( a_e \), it is only considered valid if \( 0 \leq a_e \leq \texttt{maxAge} \). Links with \( a_e > \texttt{maxAge} \) are considered decohered and are automatically discarded from the state. This constraint ensures the state space remains bounded and reflects the temporal fragility of real-world quantum memories.
+\subsubsection*{Swap Failure and Fidelity Semantics}
 
-Additionally, we assume agents have access to the full entanglement state of the network. This global observability is justified by the hybrid nature of quantum networks, where classical control information can be transmitted rapidly, enabling a centralized or semi-centralized coordination mechanism across nodes.
+Swapping operations are modelled as compound Bernoulli processes, where each individual swap succeeds independently with probability \(p_{\text{swap}}\). For multi-hop entanglement paths, the overall success is contingent on all constituent swaps succeeding, yielding a total probability \(P_{\text{success}} = p_{\text{swap}}^n\) for a sequence of \(n\) sequential swaps. This formulation captures the exponential fragility of long-range entanglement and emphasizes the difficulty of reliable quantum distribution over extended paths.
 
-\subsubsection{Failure and Fidelity Semantics}
-Swap failures are modeled conservatively: if any link involved in a multi-hop entanglement swap fails, the entire operation fails, and all constituent entanglements are lost. This approach reflects the inherent fragility of long-range quantum operations and avoids the additional complexity of modeling partial-path recovery or incremental swaps. Without such simplification, theoretical performance analysis becomes significantly more challenging due to the increased dimensionality and non-deterministic behavior introduced by partial progress.
+Critically, we assume that entanglement age does not influence swap success. That is, fidelity remains constant until expiration. While unrealistic in physical terms—where decoherence reduces fidelity over time—this abstraction preserves a compact state space and simplifies analysis. Introducing age-dependent success would not only increase modelling complexity, but also entangle the semantics of memory, timing, and reliability in ways that would obscure policy learning. This assumption aligns with our goal of isolating high-level scheduling behaviour rather than capturing physical-layer fidelity decay. It is worth noting that incorporating age-dependent fidelity would be a trivial extension in the code.
 
-Formally, we treat each individual swap as an independent Bernoulli trial with success probability \( p_{\text{swap}} \). For a multi-hop swap path involving \( n \) sequential swaps, the overall success probability of the operation is modeled as a compound Bernoulli event where $P_{\text{success}} = p_{\text{swap}}^n$—a probabilistic formulation that captures the exponential decay in success likelihood as path length increases.
+In our model, swap failure is terminal: all entanglements involved are discarded, and no partial success or fallback path is considered. This conservative approach reflects the all-or-nothing nature of quantum operations and avoids the need to model intermediate system states, which are both physically delicate and epistemically uncertain. In practice, it may not even be possible to identify which part of a multi-hop path failed, since any measurement of the system risks collapsing the quantum state. By assuming atomic swap execution, we avoid introducing non-deterministic partial outcomes that would complicate both theoretical analysis and policy learning dynamics.
 
-\subsection{Network Topology and Traffic Modeling}
-When goals share edges, fairness becomes harder (due to resource contention).
+Although modelling partial swap outcomes could offer additional granularity, it would conflict with our assumption of instantaneous, atomic operations and require redefining the temporal structure of the environment. Furthermore, the benefits of increased fidelity realism are outweighed by the associated expansion in state space, training time, and exploration requirements. Given our focus on scalable fairness-aware scheduling and policy evaluation, we leave such extensions to future work.
 
-Explicitly mention how your model captures this and why it’s critical.
-We consider static, homogeneous network topologies where all edges share the same entanglement generation probability (\(p_{\text{gen}}\)) and swap success probability (\(p_{\text{swap}}\)), both bounded within \((0,1]\). While this simplifies the environment, it allows for clean evaluation of policies under controlled settings. 
+While modelling partial swap outcomes could increase fidelity realism, it is misaligned with the goals of this work. Our focus is on fairness-aware scheduling and policy evaluation under uncertainty, not low-level quantum dynamics. Partial success semantics shift the problem toward fault tolerance and recovery—challenges better suited to hardware-level control or error correction. These details add complexity without advancing our core fairness objectives. If explored, they are best treated as physical constraints imposed on the agent, not as strategic decisions. To avoid conflating physical limitations with policy design, we restrict our model to binary outcomes and leave finer-grained fidelity modelling to future work.
 
-Initial edges represent physical links between connected nodes, and are fixed. If capacity is available, each edge attempts to generate entanglement at every timestep with probability \(p_{\text{gen}}\). These links then become candidates for swapping in subsequent steps.
 
-To enable interpretability and reduce computational complexity, we focus on simple line and dumbbell-style topologies. These topologies naturally create bottlenecks and contention zones between different user flows—ideal for studying fairness and starvation. Each additional edge introduces new entanglement paths, increasing the state-action space roughly as \( \mathcal{O}(N^2) \), where \(N\) is the number of node pairs [NEED TO EXPAND ON THIS]. Discussion of State Explosion / Complexity Growth
+\subsubsection*{Network Topology and Environment}
 
+We model quantum networks as static, homogeneous graphs where all edges share fixed entanglement generation and swap success probabilities, denoted \(p_{\text{gen}}\) and \(p_{\text{swap}}\), respectively. These parameters are bounded within \((0, 1]\) and applied uniformly across the network. This simplifies the environment while preserving key dynamics of contention, probabilistic failure, and scheduling.\footnote{If either \(p_{\text{gen}} = 0\) or \(p_{\text{swap}} = 0\), then successful entanglement distribution across non-trivial paths becomes impossible, as no entanglement can be generated or extended.}
+
+While real networks may differ in hardware reliability, we treat variations in \(p_{\text{gen}}\) and \(p_{\text{swap}}\) as functionally equivalent to changes in topology. Since swap success probabilities compound across hops, two edges at \(p = 0.5\) yield the same success rate (\(0.25\)) as a single link at \(p = 0.25\), assuming no memory constraints. This allows us to explore heterogeneous reliability regimes through topological variation, which offers greater control and interpretability. However, this equivalence weakens when \texttt{maxAge} \(> 1\), as longer paths increase the risk of link expiration, a limitation not shared by single-hop links.
+
+
+Each edge corresponds to a physical quantum link. At each timestep, unoccupied edges attempt entanglement generation with probability \(p_{\text{gen}}\). Successful links are timestamped with an initial age of 1 and increment at each step until used or discarded after surpassing a memory cut-off (\texttt{maxAge}). This ageing process captures temporal fragility and bounds the effective coherence time of qubits.
+
+To manage complexity, we restrict evaluation to small, structured topologies—specifically line and dumbbell graphs. These induce natural contention and shared links between goals, highlighting trade-offs between fairness and throughput. As paths between source-destination pairs are assumed fixed and known a priori, this abstraction eliminates the need for dynamic routing and allows agents to focus purely on timing and coordination. As routing is typically handled via robust classical infrastructure in hybrid quantum-classical architectures, this assumption is consistent with early-stage quantum networks [REF LIT REVIEW].
+
+The environment’s state space scales exponentially with the number of edges \(E\), as each can be in one of \(\texttt{maxAge} + 2\) states (ages \(1\) to \texttt{maxAge}, or \(-1\) if empty):
+\[
+|\mathcal{S}| = (\texttt{maxAge} + 2)^E
+\]
+This remains tractable for simple topologies, but becomes intractable for general graphs where edge count grows as \(\mathcal{O}(N^2)\), justifying the use of linear function approximation (see Section~\ref{sec:linearapprox}).
+
+We do not model multiplexed entanglement (i.e., multiple qubits per edge). Supporting multiplexing would require substantially more complex topologies to meaningfully test fairness, as additional capacity reduces contention. Furthermore, multiplexing introduces a different policy regime altogether: strategies optimized for single-qubit links are unlikely to generalize to multiplexed environments without. As networks scale, multiplexing will likely become a distinct challenge requiring separate consideration and dedicated policy design.
+
+
+\subsubsection{Entanglement Scheduling Policies}
+
+We evaluate two high-level entanglement scheduling strategies: \textit{wait-swap} and \textit{nested-swap} policies.\footnote{Naming follows the terminology in \cite{inesta2023optimal}, which studied the impact of swap timing in single-user scenarios.} These differ in when and how swaps are performed.
+
+\textbf{Wait-swap} strategies defer swaps until an entire end-to-end path is entangled. This conservative approach minimizes the risk of failure and is often effective in low-availability or short-memory environments, where preserving resources is critical. In contrast, \textbf{nested-swap} (or ASAP) policies perform intermediate swaps as soon as local link conditions allow, progressively building long-range entanglement.
+
+Nested swapping has the advantage of exploiting intermediate progress and can help bypass highly contended paths. For instance, entangling and swapping a partial path early may allow one goal to complete before a more congested path becomes available, improving fairness and throughput. An illustrative example is shown in Figure~\ref{fig:nestedSwapFairness}, where a nested strategy avoids starvation by opportunistically progressing through uncongested segments.
+
+However, the effectiveness of this approach is shaped by our memory constraints: each edge holds only a single entangled qubit. In high-contention environments, this limitation makes nested strategies particularly valuable, as agents must act opportunistically when links become available. In contrast, more realistic quantum memory models with larger capacity would allow entanglement to be buffered at intermediate nodes, reducing the reliance on nested execution.
 
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/starvation.jpg}
-  \caption{Show our main topology we are exploring}
-  \label{fig:topology}
+  \includegraphics[width=0.8\linewidth]{paper/figures/nestSwapBenifits.jpg}
+  \caption{Illustrative example of nested-swap benefits. Intermediate swaps allow the agent to make progress toward a goal by bypassing congested regions, helping maintain fairness under contention.}
+  \label{fig:nestedSwapFairness}
 \end{figure}
 
-We do not model multiplexed entanglement in this work. Although it would significantly increase realism, it also introduces complexity at the quantum switch level \cite{thiru2025optimal}, which is beyond the scope of our current study.
 
-\subsection{Entanglement Scheduling Policies}
-We extend our models to also work with intermediate swaps... we do this because... we need to make these changes...
-We evaluate two distinct classes of entanglement scheduling strategies: \textit{wait-swap} and \textit{nested-swap} policies, as illustrated in Figure~\ref{fig:basicPolicies}. These policies differ in when and how entanglement swaps are initiated. Wait-swap strategies are conservative: swaps are delayed until deemed more beneficial, reducing the risk of premature entanglement expiration but potentially under-utilizing available links. In contrast, nested-swap strategies trigger swaps as soon as possible, leveraging early opportunities for long-distance entanglement at the cost of increased failure probability and more aggressive resource use.
-
-These approaches exhibit different trade-offs depending on network parameters—particularly the entanglement generation probability $p$ and the swap success probability $p_s$. As demonstrated by Iñesta et al.~\cite{inesta2023optimal}, the performance gap between optimal scheduling policies and simpler heuristics like swap-asap depends strongly on these parameters. When $p$ or $p_s$ is low, entangled links become harder to generate or preserve, making each link more valuable. In these cases, careful swap timing becomes critical to avoid prematurely consuming useful resources. Consequently, the advantage of optimal, globally-informed policies increases as $p$ or $p_s$ decreases. In particular, for deterministic swaps ($p_s=1$), the benefit of optimal scheduling is most pronounced when $p$ and the memory cutoff $t_{\text{cut}}$ are small. For probabilistic swaps ($p_s < 1$), however, the optimal policy tends to outperform swap-asap most significantly when $p$ and $t_{\text{cut}}$ are higher, as better link availability and longer memory lifetimes allow for more strategic action selection. These findings highlight that the value of intelligent scheduling grows in more resource-constrained or failure-prone regimes.
-
+These strategies reflect fundamental trade-offs between reliability, fairness, and opportunism. As shown in prior work \cite{inesta2023optimal}, wait-swap performs better when entanglement is scarce or fragile, while nested-swap excels in high-availability networks. Our environment supports both modes, allowing reinforcement learning agents to discover context-dependent policies rather than adhere to fixed heuristics.
 
 
 \subsection{Formal MDP Formulation}
-We model our environment as a Markov Decision Process (MDP) defined by the tuple $(\mathcal{S}, \mathcal{A}, T, R, \gamma)$
-where:
+To support reinforcement learning, we model the quantum scheduling environment as a Markov Decision Process (MDP), enabling principled policy optimization under stochastic constraints. The MDP is defined by the tuple \((\mathcal{S}, \mathcal{A}, T, R, \gamma)\), where:
 
 \begin{itemize}
-    \item $\mathcal{S}$ is the set of all network states. Each state encodes the full entanglement map across the network, represented as an adjacency matrix where each edge $(i, j)$ stores an integer denoting the age of an entangled qubit between nodes $i$ and $j$. An age of $-1$ indicates no entanglement present. States may also include auxiliary statistics, such as recent goal-specific delivery rates, for use in reward calculation or fairness tracking.
+    \item \(\mathcal{S}\) is the state space. Each state is a tuple \((s_{\text{e}}, s_{\text{EDR}})\), where:
+    \begin{itemize}
+        \item \(s_{\text{e}}\) is a list of \((i, j, a_{ij})\) tuples, where \((i, j)\) denotes an edge and \(a_{ij} \in \{-1, 1, \dots, \texttt{maxAge}\}\) is the current entanglement age (with \(-1\) indicating no entanglement),
+        \item \(s_{\text{EDR}}\) is a vector of recent delivery rates (EDRs) for each user goal.
+    \end{itemize}
 
-    \item $\mathcal{A}$ is the set of feasible entanglement swap actions available at each timestep. Each action $a \in \mathcal{A}$ is represented as a tuple:
+    \item \(\mathcal{A}\) is the action space. Each action \(a\) is a tuple:
     \[
-    a = (\texttt{path}, \texttt{goal}, \texttt{success})
+    a = (\texttt{path}, \texttt{goal})
     \]
     where:
     \begin{itemize}
-        \item \texttt{path} is an ordered list of network nodes involved in the proposed multi-hop swap (e.g., $[i, j, k]$),
-        \item \texttt{goal} denotes the intended end-to-end entanglement pair $(s, d)$ targeted by the action (empty action exists []),
-        \item \texttt{success} is a binary indicator of whether the swap operation succeeded (used post-transition for reward assignment and state update).
+        \item \texttt{path} is an list of edges forming a valid swap path,
+        \item \texttt{goal}: the source-destination pair.
     \end{itemize}
-
-    \item $T(s' \mid s, a)$ is the transition probability function. It defines the distribution over next states $s'$ given current state $s$ and action $a$. Transitions reflect:
+    
+    The null action \(([], \texttt{None})\) represents a no-op.
+    
+    \item \(T(s' \mid s, a)\) is the transition probability function, capturing:
     \begin{itemize}
-        \item \textit{Stochastic swap outcomes}, based on $p_{\text{swap}}$ and the number of hops,
-        \item \textit{Link aging and expiration}, applied to all entanglements in the network,
-        \item \textit{New link generation}, sampled independently for each physical edge with probability $p_{\text{gen}}$.
+        \item stochastic swap outcomes, governed by the success probability \(p_{\text{swap}}^{n-1}\) for a length-\(n\) path,
+        \item aging and expiration of existing entanglements, and
+        \item independent Bernoulli trials for new entanglement generation on unoccupied edges with probability \(p_{\text{gen}}\).
     \end{itemize}
+    These transitions can be formally decomposed as:
+    \[
+    P(s' \mid s, a) = P_{\text{swap}}(o \mid s, a) \cdot P_{\text{gen}}(s' \mid s, a, o)
+    \]
+    Here, \(P_{\text{swap}}\) determines whether the swap succeeds or fails, consuming entanglement regardless of outcome. The result \(o \in \{\text{success}, \text{failure}\}\) influences the post-action state, which is further modified by entanglement aging and regeneration through \(P_{\text{gen}}\). This layered structure highlights the non-triviality of reaching a target state, even when the agent takes the "right" action.
+    
 
-    \item $R(s, a, s')$ is the reward function. This is computed post-transition and may vary depending on the learning objective. In this work, we often use a log-ratio fairness reward, but the MDP formulation is general to support other functions such as throughput maximization, priority weighting, or starvation penalty.
+    \item \(R(s, a, s')\) is the reward function. We use a log-ratio fairness objective comparing expected utility (based on swap success and path length) with historical delivery performance, computed via rolling EDR windows (see Section~\ref{sec:rewardFunction}).
 
-    \item $\gamma \in [0,1)$ is the discount factor, used to prioritize short-term versus long-term reward.
+    \item \(\gamma \in [0, 1)\) is the discount factor, controlling the agent’s preference for long-term versus immediate fairness improvements.
 \end{itemize}
 
-Each timestep follows a three-phase simulation cycle:
+Each simulation step proceeds as follows:
 \begin{enumerate}
-    \item Execute selected action $a_t$ (entanglement swap),
-    \item Update the network state: apply aging and prune expired links,
-    \item Stochastically generate new entanglements on available edges.
+    \item The agent selects an action \(a_t = (\texttt{path}, \texttt{goal})\),
+    \item Entanglements are consumed depending on the action and regardless of outcome,
+    \item All entanglements age; those exceeding \texttt{maxAge} are discarded,
+    \item Entanglement is generated on free edges with probability \(p_{\text{gen}}\),
+    \item EDR statistics are updated and included in the new state.
 \end{enumerate}
 
-This formulation allows reinforcement learning agents to reason over uncertain, time-sensitive entanglement dynamics, and optimize policies that balance fairness, efficiency, and reliability.
-
-\subsubsection{Linear Function Approximation}
-What empirical evidence led to that? (e.g. poor performance with bins). why over neural net
-To handle the continuous and high-dimensional state space in our quantum network model, we use a linear function approximator to estimate Q-values. Instead of maintaining a full Q-table over all possible (state, action) pairs, we learn a linear mapping from state features to Q-values using per-action weight vectors.
-
-Each state is featurized into a real-valued vector consisting of entanglement ages and recent EDRs, capturing both resource freshness and fairness history. For each unique action (defined by a consumed path and goal), we associate a weight vector that is updated via stochastic gradient descent using the temporal difference (TD) error.
-
-This approach allows the agent to generalize across similar states, enabling effective learning in large or continuous environments without explicit discretization of fairness metrics. It also supports flexible reward shaping and avoids the state explosion that occurs in traditional tabular methods.
-[]Why not deep RL? Why not other approximators?]
-		explain my 1+ to the edr to make it work
+This MDP formulation directly reflects our scheduling environment and aligns with the abstractions and constraints defined in earlier sections. It enables learning agents to reason over fairness, reliability, and memory limitations in a principled and consistent manner.
 
 
-\subsection{Reward Function Design}
-[MENTION HOW WE DESIGN OUR REWARD FUNCTION TO BASE OFF OF ACTIONS, AND NOT STATES, AS WE CONSUME QUBITS INSTANTLY]
-[SEMI REWARDS FOR ATTEMPTS]
-[EXPLAIN WHY THE REWARD FUCNTION WORKS / FAILS]
+\subsubsection*{Linear Function Approximation} \label{sec:linearapprox}
 
-Designing a reward function for fairness in quantum networking presents unique challenges. Unlike classical systems, where fairness can be enforced over long time horizons, quantum entanglement is inherently ephemeral. Qubits decohere rapidly and cannot be recovered once lost, which means fairness must be enforced in real time. This necessitates a reward structure that is sensitive to both short-term equity and the temporal dynamics of quantum communication.
+To handle the high-dimensional state space of our quantum network MDP, we adopt a linear function approximator for Q-value estimation. This avoids the combinatorial explosion of full Q-tables, which explicitly store a Q-value for every state-action pair. Since the Q-table effectively defines the agent's policy—selecting the highest-value action in each state—this approach becomes impractical as the state space scales with network size and memory dynamics.
 
-We propose a log-ratio fairness reward function, defined as:
+Linear approximation generalizes across similar states while maintaining tractability. Though potentially limited in highly non-linear or high-dimensional settings, we reduce this risk by bounding key parameters such as graph size, the number of goals, and entanglement lifespan (\texttt{maxAge}). These constraints help preserve model expressiveness without compromising training stability.
 
+
+
+Each state is encoded as a real-valued feature vector \(\phi(s)\), comprising:
+\begin{itemize}
+    \item Normalized entanglement ages for each edge, with missing links represented as \(-1.0\),
+    \item Smoothed entanglement delivery rates (EDRs) for each goal, providing local fairness context.
+\end{itemize}
+
+Each action \(a = (\texttt{path}, \texttt{goal})\) is assigned a dedicated weight vector \(\mathbf{w}_a\), and the corresponding Q-value is estimated as:
 \[
-R_t = \sum_{g \in G} \log \left( \frac{r^{\text{inst}}_g + \epsilon}{\bar{r}_g + \epsilon} \right)
+Q(s, a) = \mathbf{w}_a^\top \phi(s)
 \]
 
-where:
+This structure enables goal-specific generalization while maintaining per-action distinctions. It supports efficient online updates and avoids overfitting to sparsely visited states.
+
+We selected linear function approximation over discretized binning due to the latter’s poor resolution in capturing fairness dynamics. EDRs often change incrementally—especially in sparse or low-success regimes—making coarse bins insensitive to meaningful variation. While finer discretization could address this, it would drastically inflate the state space and reduce generalization. 
+
+We also considered deep neural networks as an alternative. While they offer greater expressiveness, they were ultimately unnecessary in our setting: linear models often suffice in smaller or structured state spaces, as demonstrated in classic RL benchmarks [CITE]. Additionally, linear methods provide theoretical convergence guarantees under standard assumptions[CITE], are easier to debug, and are less prone to instability or overfitting—issues especially relevant in our stochastic environment with sparse rewards. We prioritized stability, simplicity, and interpretability, making linear approximation a well-aligned and empirically effective choice.
+
+
+
+
+
+\subsection{Reward Function Design} \label{sec:rewardFunction}
+
+Effective quantum network scheduling must optimize both fairness and throughput. Fairness ensures equitable access across users, while throughput—defined as the sum of entanglement delivery rates (EDRs) across all goals—captures the system’s overall efficiency. Unlike classical settings, fairness in quantum systems must be enforced in real time: entanglement is stochastic and ephemeral, and missed opportunities cannot be retroactively corrected. Our reward function must therefore encode fairness precisely at the point when entanglement is consumed via a swap.
+
+We define a reward based on proportional fairness:
+\[
+R_t = \sum_{g \in \mathcal{G}} \log\left( 1 + \frac{r^{\text{inst}}_g + \epsilon}{\bar{r}^{\text{global}}_g + \epsilon} \right)
+\]
+Here, \( r^{\text{inst}}_g \) is the instantaneous number of entangled pairs delivered to goal \( g \), and \( \bar{r}^{\text{global}}_g \) is a rolling average of historical delivery. The constant \(\epsilon > 0\) prevents division by zero, while the \(+1\) ensures non-negative rewards even for low-delivery regimes. We experimented with omitting the offset, but found it discouraged exploration of underserved goals and destabilized early learning.
+
+Notably, \( r^{\text{inst}}_g \) also implicitly acts as a proxy for cost: goals with longer paths or lower swap success probabilities naturally yield fewer successful entanglements, leading to smaller \( r^{\text{inst}}_g \) values and thus lower rewards. This means the reward function inherently down-weights actions that are more resource-intensive, without requiring an explicit penalty term. While we do track such resource inefficiencies—e.g., the number of wasted or failed entanglement attempts—they are not the primary optimization target of this work. Instead, our focus is on fairness and throughput at the point of successful delivery. Introducing additional cost-based shaping could risk double-counting these effects and compromise the interpretability and fairness guarantees of the proportional fairness objective.
+
+Rewards are only issued when entanglement is successfully consumed through a swap. In our setting with fixed topology and homogeneous success probabilities \(p_{\text{swap}}\), each goal’s swap success rate is given by:
+\[
+p^{\text{inst}}_g = p_{\text{swap}}^{L_g - 1}
+\]
+where \(L_g\) is the number of links on the path to goal \(g\). This value is constant per goal and implicitly reflected in \(r^{\text{inst}}_g\).
+
+To encourage attempts toward underserved goals, we also explored issuing \emph{partial rewards} for failed swaps, scaled by a fixed constant (e.g., 0.5). Although more adaptive schemes could improve performance, we opted for static scaling to retain simplicity and interpretability.
+
+This reward formulation inherits several desirable mathematical properties:
+\[
+f(x) = \log\left(1 + \frac{r_{\text{inst}}}{x + \epsilon}\right)
+\]
 \begin{itemize}
-    \item $r^{\text{inst}}_g$ is the instantaneous entanglement delivery rate (EDR) for goal $g$
-    \item $\bar{r}_g$ is the running average EDR for goal $g$
-    \item $\epsilon$ is a small constant to prevent division by zero
+    \item \textbf{Monotonicity:} Rewards increase as historical service \(x = \bar{r}^{\text{global}}_g\) decreases.
+    \item \textbf{Concavity:} Diminishing returns penalize monopolization of delivery.
+    \item \textbf{Bounded and Smooth:} Facilitates stable learning under stochastic dynamics.
+    \item \textbf{Relative Scaling:} Robust to delivery scale, focusing on equitable ratios.
 \end{itemize}
 
-This reward is derived from the $\alpha$-fairness family (with $\alpha = 1$), offering proportional fairness via a log utility. It rewards timely, equitable delivery while penalizing temporary starvation. Unlike Jain’s Index, which is useful for global evaluation, this function provides smooth, per-timestep feedback suitable for reinforcement learning. 
+We compared alternative reward forms:
+\[
+R = \sum_g \frac{r^{\text{inst}}_g}{\bar{r}^{\text{global}}_g + \epsilon}, \quad R = r^{\text{inst}}_g - \bar{r}^{\text{global}}_g
+\]
+These proved too volatile, overreacting to rare delivery spikes. The log-ratio design better stabilizes updates and maintains fairness across goals.
 
-To prevent instability during early training—when historical rates are near-zero—we initialize EDR tracking after a short warm-up period (e.g., $t = 10$) using a uniform baseline across users. This reward is used consistently across all learning algorithms in Section 4.2.
+Our formulation is grounded in the well-established \(\alpha\)-fairness framework:
+\[
+U_\alpha(x) = \begin{cases}
+\frac{x^{1 - \alpha}}{1 - \alpha}, & \alpha \neq 1 \\
+\log(x), & \alpha = 1
+\end{cases}
+\]
+This framework naturally captures the trade-off between fairness and throughput. We adopt \(\alpha = 1\) for proportional fairness in this section, but explore other values empirically (see Section~\ref{sec:results}) to understand the sensitivity and fairness-efficiency trade-offs of our model. Importantly, this removes the need for explicit reward shaping schemes like \(\theta \cdot \text{Fairness} + (1 - \theta) \cdot \text{Throughput}\): varying \(\alpha\) implicitly balances both. This also makes it easier in practice to tailor the reward behavior to a user's specific policy objectives.
 
-Also talk about Alpha Fairness
-reward = theta * throughput + (1 - theta) * fairness??
+Finally, the reward remains valid in dynamic settings where \(p_{\text{swap}}\) or \(p_{\text{gen}}\) change over time. Because the reward depends only on observed instantaneous delivery, it adapts naturally. However, this assumes that \(r^{\text{inst}}_g\) is observable or can be estimated in real time—introducing a modelling trade-off in systems where such metrics are unavailable.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/globalInstantRate.png}
+  \caption{Impact of instantaneous vs. historical delivery on reward. The function sharply rewards goals with low past delivery when entanglement is successfully routed, but flattens as delivery becomes more frequent.}
+  \label{fig:param}
+\end{figure}
+
+Overall, our reward design is interpretable, well-founded in fairness theory, and highly adaptive—supporting both equity and efficiency in quantum networks.
 
 
-\subsection{Fairness Metrics}
 
-Classical networking literature offers a rich set of fairness metrics, but many of these assume stable conditions, continuous flows, or the ability to average outcomes over time. Quantum networking, by contrast, operates under probabilistic, ephemeral constraints—where fairness must be enforced \textit{in real time}. A successful fairness metric in this setting must reflect both short-term equity and sensitivity to missed opportunities due to decoherence or link failure. Some fairness metrics do not account for the temporal sensitivity of fairness in quantum systems—which we attempt to address using a moving window for recent time horizons. This penalizes bursty policies that may appear fair on average but allow temporary starvation.
 
-We consider the following fairness metrics to evaluate policy behavior:
+
+
+
+
+
+\subsection{Performance Metrics}
+
+We evaluate fairness using \textbf{Jain’s Index}, a widely adopted metric for measuring relative equity across multiple goals:
+\[
+J = \frac{\left(\sum_g r_g\right)^2}{|\mathcal{G}| \cdot \sum_g r_g^2}
+\]
+Here, \( r_g \) is the entanglement delivery rate (EDR) for goal \( g \), computed as a rolling average over a window of size \( w \):
+\[
+r_g = \frac{N^{(\text{success})}_g}{w}
+\]
+where \( N^{(\text{success})}_g \) is the number of successful deliveries to goal \( g \) in the past \( w \) timesteps. This formulation balances responsiveness and stability, smoothing transient noise while tracking recent fairness performance.
+
+Jain’s Index ranges from \(1/|\mathcal{G}|\) (maximal unfairness) to 1 (perfect fairness). It is scale-invariant and well-suited to stochastic quantum networks, where delivery rates fluctuate due to probabilistic entanglement and contention. Most importantly, it captures \emph{relative} fairness—focusing on equitable service distribution.
+
+To complement fairness, we report \textbf{total throughput}, defined as the sum of all EDRs:
+\[
+\text{Throughput} = \sum_{g \in \mathcal{G}} r_g
+\]
+Throughput reflects the system’s efficiency—i.e., the total number of successful entanglement deliveries per timestep—capturing how much service the network is providing overall.
+
+To visualize the trade-off between fairness and efficiency, we use \textbf{Pareto plots} of Jain’s Index vs. throughput. A desirable Pareto frontier lies closer to the top-right—indicating both high equity and high performance—while dominating lower curves across both metrics.
+
+\textbf{Min-max fairness}, defined as \( \min_g r_g \), performs poorly under stochastic variation. A single unlucky or long-path goal can dominate the signal, leading to misleading evaluations and unstable learning.
+
+\textbf{Expected delivery time}, defined as \( \mathbb{E}[T_g] = 1 / r_g \), is similarly problematic. It becomes unstable as \( r_g \rightarrow 0 \), and overreacts to temporary gaps in service.
+
+In contrast, EDR-based metrics are smoother and more resilient to random fluctuations, making them better suited for fairness-aware scheduling in probabilistic quantum environments.
+
+In summary, we adopt Jain’s Index as our primary fairness metric and total throughput as a complementary efficiency signal—evaluated jointly through Pareto analysis to assess trade-offs between equitable service and overall system performance.
+
+
+
+
+\subsection{Summary of System Design}
+
+To summarise, we model quantum entanglement distribution as a discrete-time reinforcement learning problem, abstracting key physical processes while preserving the core challenges of fairness, reliability, and coordination. Our system simplifies low-level quantum dynamics to focus on scheduling behaviour under uncertainty.
+
+\textbf{Key features of the environment:}
 
 \begin{itemize}
-    \item \textbf{Jain's Fairness Index:} is a good choice because it's RELATIVE fairness
-    \[
-        J = \frac{(\sum_g r_g)^2}{|\mathcal{G}| \cdot \sum_g r_g^2}
-    \]
-
-    \item \textbf{Starvation-Aware Penalty:}
-    \[
-        S_g = \max_t \left\{ \text{consecutive timesteps with } r_g^{\mathrm{inst}} = 0 \right\}
-    \]
-
-    \item \textbf{Weighted Fairness:} Optional goal-specific weights \( w_g \) for QoS or priority control
+  \item \textbf{Time:} Discrete steps; entanglement ages deterministically and expires after a fixed \texttt{maxAge}.
+  \item \textbf{Entanglement Generation:} Stochastic, per-edge with fixed probability \(p_{\text{gen}}\).
+  \item \textbf{Swapping:} Instantaneous, atomic, and probabilistic with compound success across hops.
+  \item \textbf{Memory:} Single-qubit per edge; no multiplexing.
+  \item \textbf{Observability:} Full global state access, reflecting classical-quantum hybrid control.
+  \item \textbf{Topology:} Static, known paths; no dynamic routing.
+  \item \textbf{State Representation:} Tuple of entanglement ages and smoothed per-goal EDRs.
+  \item \textbf{Reward:} Log-ratio proportional fairness function, balancing equity and throughput.
+  \item \textbf{Policy Learning:} Linear function approximation for scalable, interpretable decision-making.
 \end{itemize}
 
-These metrics allow us to examine both runtime behavior and long-term distributional outcomes under different policies.
-!!!!! Why Min-Max Fairness Can Be Problematic:
-Extremely Sensitive to One Goal
-we don't use it, because if only works in a determinstic envipronemtn where we always have full availability (whereas in quantum states this cannot happen)
+This setup enables tractable experimentation with fairness - aware policies under stochastic, resource-constrained conditions typical of early-stage quantum networks.
 
-If one user has zero delivery (say, due to bad path or low link success), the entire reward is zero — no matter how well others do.
+\section{Algorithms}
 
-This can make learning unstable or even untrainable in some environments.
+Fairness-aware entanglement scheduling requires agents to reason about delayed rewards—specifically, when to act and when to wait. Unlike greedy heuristics, which optimize short-term outcomes, RL enables policies that consider long-term fairness by linking early actions to future rewards.
 
-for the log reward to trend towards morefaireness...
-What it encourages:
-Users who are doing worse than their history get a big reward when they improve.
+We examine three RL approaches: Value Iteration, Q-learning, and N-step SARSA. Value Iteration, while analytically tractable, proved ineffective due to its reliance on known transition models and inability to capture our reward structure—grounded in delivery events, not expected outcomes. However, it informed our shift to Q-learning, a model-free, off-policy method better suited to stochastic dynamics. \footnote{In reinforcement learning, \textbf{off-policy} methods (e.g., Q-learning) learn optimal behavior independently of the current policy being executed, allowing them to use experiences generated by different policies. In contrast, \textbf{on-policy} methods (e.g., SARSA) learn from experiences directly gathered by the policy currently being followed, thus closely aligning learning and behavior.}
 
-Users who are doing well get little to no reward.
+Q-learning estimates future value through single-step bootstrapping. While adaptive, it struggles to learn the benefit of waiting—crucial for fairness—since it lacks multi-step credit assignment. This limitation motivated our move to N-step SARSA, an on-policy method that uses actual rollouts to propagate reward across multiple timesteps.
 
-Balanced improvements over time are favored.
+This distinction is critical: off-policy algorithms like Q-learning may overestimate action values not aligned with fairness-driven policies, while on-policy methods ground learning in observed behavior, improving stability in non-stationary reward settings. However, on-policy methods can suffer from slower convergence and higher variance due to limited reuse of past experience.
 
-what it doesn’t guarantee:
-That all users converge to equal performance (i.e., absolute fairness).
+The ability to wait—i.e., to forgo immediate reward for future gain—is what separates RL agents from greedy baselines. There are two ways to pursue this: by computing expected returns from transition probabilities (as in Value Iteration), or by simulating trajectories to observe delayed reward effects. Since our value-based approach failed to capture fairness dynamics, we instead adopt simulation-based methods to learn behaviour through interaction.
 
-LOGLOGLOG][][][]Log-Ratio Fairness: Pros \& ConsPros
-Temporal sensitivity: Responds to recent drops or bursts.
+The sections that follow detail each method’s design, implementation, and limitations in our quantum scheduling environment.
 
-Adaptive: Encourages fairness dynamically, even if everyone’s performance is improving.
+\subsection{Greedy Algorithm}
 
-No hard equality bias: Doesn't force strict equality — lets better-performing users keep growing if others are catching up too.
-Cons
-Not absolute: May tolerate users staying low as long as they improve a bit.
+We implement greedy baselines to serve two roles: (1) as a benchmark for short-term contention handling via a simple FCFS (First-Come, First-Served) strategy, and (2) as a comparison point for our log-ratio fairness reward, by applying the same reward function in a purely greedy setting.
 
-Historical drift: If one user was previously underperforming, the reward may favor them indefinitely.
+The FCFS variant selects the first available entanglement request with a valid path, prioritizing minimal hops. In contrast, the log-utility greedy baseline evaluates all valid swaps and selects the one that yields the highest immediate fairness reward (see Section~\ref{sec:rewardFunction}). Both approaches are stateless and reactive: at each timestep, the agent selects the action \( a \in \mathcal{A}(s) \) that maximizes the instantaneous reward:
+\[
+a^* = \arg\max_{a \in \mathcal{A}(s)} R(s, a)
+\]
+where \( R(s, a) \) is the log-ratio fairness reward computed from the current state \( s \) alone, without forecasting future outcomes or propagating delayed rewards.
 
-Can be gamed: A user with very low historical EDR gets high reward for small improvements.
+These baselines are straightforward to implement and provide stable references for evaluating reinforcement learning (RL) policies. However, they are inherently myopic. Greedy policies lack temporal abstraction and make decisions solely based on immediate observations, with no memory or capacity to wait. This prevents them from deferring swaps strategically—even when such delays could improve long-term fairness or throughput.
 
+This short-sightedness introduces several drawbacks. Greedy agents tend to exhibit high variance in stochastic environments, as they react only to short-term fluctuations without hedging. They are also insensitive to opportunity cost, often consuming entanglement prematurely rather than preserving it for better-aligned future use.
 
+Despite these limitations, the greedy baseline remains useful for :
+\begin{itemize}
+  \item \textbf{Sanity checks:} Validate that learned policies outperform simple heuristics.
+  \item \textbf{Baseline comparisons:} Provide a clear reference for short-term, myopic behaviour.
+  \item \textbf{Resource-limited regimes:} Perform competitively when learning time is constrained or entanglement is extremely scarce.
+\end{itemize}
 
-PLANPLANPLANPLANPLANPLANPLANPLAN
-yeah i was thinking log ratio vs pure throughput vs pure fairness vs pareto style tradeoff...
+In summary, while greedy strategies are simple and responsive, they lack the foresight required for fairness-aware scheduling under uncertainty. Their role as a baseline is valuable, but they underscore the need for temporally-aware learning in complex quantum environments.
+
 
 
 \subsection{Exploration}
-We have a very large state space, potentiall. You briefly mention ε-greedy and softmax, but you could:
-Explain why softmax might be better in some contexts (temperature sensitivity to reward gaps).
-Show how exploration decay impacts convergence speed and fairness.
-\newpage
-.
-\newpage
-\section{Algorithms}
-Talk about the difficulty in our model of working ahead in the future- THIS IS THE KEY ISSUE... ALONG WITH OUR REWARD FUNCTION AND FINDING BALANCES AND TECHNIQUES. Tell the story about how we develop our model through trial and error
-greedy baseline
-q-value -> determining out states
-q-learning -> resolution -> linear approixmation -> stuck w/ wait action (no look ahead)
-n-step -> looking ahead in the future
 
-\subsection{Greedy Algorithm}
-We implement greedy baselines to contextualize the performance of our reinforcement learning models. While not optimal, greedy strategies offer insight into the short-term trade-offs between fairness and efficiency. 
+Greedy baselines do not require exploration, as they are inherently myopic. In contrast, all reinforcement learning algorithms—Q-learning, and N-step SARSA—require exploration to discover long-term strategies.
 
-We explore several greedy variants:
+We adopt \textbf{softmax exploration} over $\epsilon$-greedy, as it consistently improves learning stability and fairness outcomes. Unlike $\epsilon$-greedy, which selects random actions uniformly, softmax weights action selection by Q-value differences:
+\[
+P(a \mid s) = \frac{e^{Q(s,a)/\tau}}{\sum_{a'} e^{Q(s,a')/\tau}}
+\]
 
-\begin{itemize}
-    \item \textbf{FCFS (First-Come, First-Served / Shortest Path First)}: Prioritizes the first available application with the shortest entanglement path.
-    \item \textbf{Log-Utility Greedy}: Uses the log-ratio fairness reward (defined in Section 4.1.7) to guide swap selection.
-    \item \textbf{Lowest EDR First}: Always prioritizes the most undeserved goal. While highly fair in the short term, this can reduce overall throughput.
-\end{itemize}
+This makes exploration more targeted—important in fairness-sensitive environments where many actions yield similar immediate rewards. Random exploration can be costly, as it may waste entanglement opportunities on suboptimal actions. Softmax mitigates this by biasing toward higher-value choices, preserving resources while still encouraging sufficient policy diversity.
 
-Greedy algorithms are myopic—they optimize each timestep independently, without considering long-term fairness or entanglement opportunity cost. This makes them strong short-term performers but prone to starvation or resource conflicts over time.
+In practice, we found that the wait-swap policy naturally encouraged exploration due to the reward structure prioritizing under-served goals. However, in settings where learning stagnated or local minima emerged, softmax-based exploration—with annealed temperature $\tau$—helped reintroduce diversity into action selection and improve convergence.
 
 
-\subsection{Q-Value Iteration} 
-Why did we intially try to go for this? Why did it fail? What implications did it have?
+\subsection{Q-Value Iteration}
+
 \subsubsection{Justification}
-We selected Q-Value Iteration as a foundational method due to its suitability for environments with fully known transition dynamics—such as ours, where both entanglement generation pGen and pSwap probabilities are explicitly defined. This aligns with Q-Value Iteration’s assumption of a known model, allowing us to compute exact expected rewards through Bellman updates. By leveraging the finite and discrete nature of our environment—bounded by topology size, entanglement aging, and a limited action space—Q-Value Iteration remains computationally tractable and converges quickly in early-stage simulations.
 
-This approach also serves as a strong ground truth benchmark against which to validate learning-based methods like Q-Learning and N-Step SARSA. Since it directly produces a deterministic policy, it allows for straightforward verification and debugging, helping ensure that the environment logic and reward structures behave as intended. Beyond its practical benefits, Q-Value Iteration reinforces the theoretical foundation of our problem as a well-defined MDP, offering a clean demonstration of optimal decision-making under perfect information. While it is not scalable to larger or dynamic networks, it provides essential insight into the upper bound of policy performance in this setting. 
+We initially explored Q-Value Iteration as a principled, interpretable baseline. It converges reliably in small, known environments and leverages complete knowledge of transition dynamics—making it a natural choice for validating our simulator and establishing a theoretical upper bound. In particular, we used it to verify correctness of reward computation and dynamics modeling under deterministic planning.
 
-While Q-Value Iteration assumes a static reward function due to its MDP formulation, our evaluation acknowledges the dynamic nature of fairness in quantum networks. Although the policy is trained on fixed transition probabilities, its effectiveness is ultimately assessed using our log-ratio fairness reward, which evolves based on the real-time EDR of each user during simulation. This allows us to reconcile the theoretical optimality of the policy with the temporally sensitive fairness objectives of our system.
+However, despite converging successfully, Value Iteration ultimately failed to yield useful policies. Its performance was consistently inferior to our greedy baselines, particularly in fairness-sensitive settings. The algorithm evaluates every state-action pair uniformly—regardless of how likely or meaningful a transition is—leading to updates based on unrealistic or rarely encountered outcomes. This misalignment significantly weakens the connection between the learning signal and real-world delivery behavior.
 
-\subsubsection{Model Implementation}
-Our implementation of Value Iteration precomputes the full transition model offline, enabling exact policy evaluation under known dynamics. Each state-action pair leads to a set of probabilistic outcomes, reflecting both \textit{successful} and \textit{failed} entanglement swaps. These outcomes differ in their resulting network state, probability, and achieved goals, depending on whether the multi-hop entanglement attempt succeeded.
+\subsubsection{Limitations}
 
-Transitions are encoded as:
+More critically, Value Iteration assumes that rewards depend solely on the current state and action. Our reward, by contrast, is tied to actual delivery events, which occur only when entanglement is successfully consumed via a swap. Because entanglement is used instantaneously and does not persist in the environment, there is no residual value that can be propagated backward through time in a traditional Bellman sense.
+
+Additionally, fairness in our model is computed using rolling EDRs—metrics that reflect delivery history. However, Value Iteration is stateless and has no mechanism to track or simulate temporal statistics across steps. This causes fairness signals to be computed solely from the simulated current state, making them reactive rather than historically grounded. As a result, the method fails to learn long-term value from strategic waiting or deferred actions.
+
+The standard Bellman update is applied as:
+
 \[
-T(s, a) \rightarrow \left\{ (s', P(s' \mid s, a), \text{achieved\_goals}) \right\}
+V(s) = \max_{a \in \mathcal{A}(s)} \sum_{s'} P(s' \mid s, a) \left[ R(s, a, s') + \gamma V(s') \right]
 \]
-Each resulting state \(s'\) is computed by first simulating the outcome of a multi-hop entanglement swap, followed by conditional aging and probabilistic entanglement generation across the network. The total transition probability is decomposed into two parts:
-\[
-P(s' \mid s, a) = P_{\text{swap}}(o \mid s, a) \cdot P_{\text{gen}}(s' \mid s, a, o)
-\]
-Here, \( P_{\text{swap}}(o \mid s, a) \) captures the probability of the swap outcome \(o\) (e.g., success or failure), determined by \( p_{\text{swap}}^{n-1} \), where \(n\) is the number of hops involved in the swap path. Then, \( P_{\text{gen}}(s' \mid s, a, o) \) represents the probability of reaching a resulting state \(s'\), conditioned on the swap outcome. This generation step accounts for aging of existing entanglements (which is deterministic in our implementation) and stochastic creation of new links.
 
-By modeling the transition process as a sequence of dependent stochastic events, we capture the nuanced interplay between swap reliability and entanglement dynamics, leading to a more accurate and expressive value function over quantum network states.
+We iterated until the maximum value change across all states fell below a convergence threshold (\(\epsilon = 10^{-4}\)). The final policy selects, for each state, the action that maximizes expected return. However, since rewards are only triggered by successful swaps—and swaps consume resources immediately—this state-centric update mechanism failed to capture the action-based, event-triggered nature of our fairness rewards.
 
-Rewards are computed using the \textit{log-ratio fairness function}, defined previously. At each step, the agent receives a reward based on the ratio between the instantaneous and historical EDRs for each goal, promoting fairness-aware scheduling.
+\subsubsection{Conclusion}
 
-The value function is updated using the Bellman equation:
-\[
-V(s) = \max_a \sum_{s'} P(s'|s, a) \left[ R(s, a, s') + \gamma V(s') \right]
-\]
-where \( \gamma \in [0,1) \) is the discount factor, and each update considers only one future timestep due to the finite-horizon nature of decoherence and memory constraints.
-
-Convergence is determined by tracking the maximum change \( \Delta V \) across all states, with training terminating when \( \Delta V < \epsilon \), where \( \epsilon = 10^{-4} \). This is visualized using a log-scaled convergence plot over iterations.
-
-The final policy is derived by selecting the highest-valued action for each state from the learned Q-values. Although limited to small topologies due to state explosion, this approach provides a strong ground truth for validating more scalable RL methods like Q-learning and N-step SARSA.
-
-\subsubsection{Challenges}
-We initially impediment Q-Value Iteration as our main method, however this technique ran into a web of challenges that quickly questioned the  applicability. As explored further in our Results and Evaluation section, the single step looking ahead lacked the ability to promote the waiting action- which can result in waiting for future entanglements to appear to satisfy a under-served application. This was apparent in both the q-values for q-values states, and performance of the model. Furthermore, it did not mess well without log-utility function - which depended on historical data of the system w.r.t EDRs, which breaks the markovian property - this motivated us to tinlcude the current EDR of the system in the action space (binned to reduce state action space). Also, as mentioned we had to explore the s, a values instead of just the s values -  as our reward comes from actions, and the probabilistic nature of taking an action.
-
-This limitations with our MDP formulation, led us to use the off-policy method of Q-learning -  which allowed us more freedom with the action space and gave far more promising results. 
+While Value Iteration served as a useful theoretical and implementation sanity check, it was ultimately unsuitable for fairness-aware quantum scheduling. Its inability to model reward timing, lack of trajectory memory, and exhaustive evaluation of implausible state transitions led to suboptimal policies that performed worse than even simple greedy baselines. These shortcomings motivated our transition to Q-Learning—an interaction-based method better aligned with the event-driven, stochastic structure of entanglement distribution.
 
 \subsection{Q-Learning}
-Explain what it is, i.e. off / on policy
+
 \subsubsection{Justification}
-Q-Learning is a natural fit for our quantum networking environment due to its model-free nature. It does not require prior knowledge of transition probabilities or reward structures—allowing it to operate effectively even when parameters like \( p_{\text{gen}} \) and \( p_{\text{swap}} \) are unknown, dynamic, or hard to model. Its ability to handle probabilistic environments makes it particularly well-suited to quantum networks, where outcomes such as entanglement success or decoherence are inherently stochastic and time-sensitive.
+Q-Learning was selected as the first learning-based alternative to Value Iteration. It is model-free and off-policy, making it well-suited to quantum networks where interaction-based adaptation is critical. Unlike planning-based methods, Q-Learning learns directly from sampled trajectories rather than simulating all possible transitions. This approach enables the use of empirically observed EDR statistics, which is a key limitation in value-planning methods like Value Iteration.
 
-The algorithm’s $\epsilon$-greedy exploration strategy enables it to discover viable policies even in dynamic and noisy environments—critical in our fairness-sensitive setting, where timely access to entanglement cannot be delayed or averaged over long horizons. Moreover, Q-Learning’s tabular simplicity provides direct visibility into decision-making, enabling debugging, interpretability, and insight into how fairness is being learned over time.
+Its off-policy nature enables the agent to learn the optimal value function while still exploring with a different behaviour policy. This was particularly useful for experimenting with various exploration strategies (e.g., softmax), without requiring policy convergence during early learning.
 
-However, Q-Learning is not without challenges. In environments with large or sparse state-action spaces, it may struggle to adequately explore rarely visited transitions—particularly when certain actions have low success probabilities. This can lead to underexplored regions of the policy space or skewed value estimation. Additionally, as an off-policy method, Q-Learning updates based on the maximum estimated future return, which can sometimes produce overoptimistic value estimates in noisy environments. These limitations make it less reliable in highly volatile or resource-constrained settings, motivating our use of complementary methods like N-step SARSA to provide a more robust perspective.
+However, Q-Learning’s main limitation is its one-step temporal difference (TD) update. The algorithm updates Q-values based solely on immediate rewards and the estimated value of the next state, limiting its ability to associate early actions—such as waiting or preparing entanglement—with fairness gains that materialize several steps later. In fairness-sensitive environments, this often results in short-sighted behaviour that prioritizes immediate throughput at the expense of long-term balance. While this limitation is less pronounced when the entanglement memory is short (e.g., \texttt{maxAge} = 1 or 2), where decisions and outcomes unfold rapidly, it becomes significantly more problematic in settings with longer memory lifetimes. In these cases, the inability to propagate credit over delayed outcomes can severely hamper the agent’s ability to learn fair, patient scheduling strategies.
 
 \subsubsection{Model Implementation}
-Our Q-Learning implementation is designed for environments with uncertain and probabilistic behavior. The agent learns by interacting with the environment, updating a Q-table that maps each state-action pair to an expected return.
 
-Each update follows the standard Q-Learning rule:
+The Q-value update rule is defined as:
 \[
-Q(s, a) \leftarrow Q(s, a) + \alpha \left[ R + \gamma \max_{a'} Q(s', a') - Q(s, a) \right]
+Q(s, a) \mathrel{+}= \alpha \left[ R + \gamma \max_{a'} Q(s', a') - Q(s, a) \right]
 \]
-where \( \alpha \) is the learning rate, \( \gamma \) the discount factor, and \( R \) is the reward computed via our log-ratio fairness function, encouraging equity in entanglement distribution.
+where $\alpha$ is the learning rate, $\gamma$ the discount factor, and $R$ the fairness reward (computed using log-ratio EDRs from the current state). The agent stores Q-values in a tabular structure indexed by $(s, a)$ and uses softmax exploration for smoother convergence.
 
-\textbf{Exploration Strategy:} The agent follows an $\epsilon$-greedy policy, selecting random actions with probability $\epsilon$ to ensure sufficient exploration. $\epsilon$ decays over time to favor exploitation as the policy stabilizes.
+To support continuous environments with no absorbing states or natural episode boundaries, we modify the standard episodic Q-learning framework by enforcing a fixed number of steps per episode. This ensures agents learn over long time horizons without prematurely resetting, which is critical for fairness-aware quantum scheduling where reward signals may be delayed and entanglement chains span multiple timesteps.
 
-\textbf{Training Loop:} The agent is trained over multiple episodes, each consisting of a fixed number of timesteps. At every timestep, it observes the current network state, selects an action, and updates the Q-table based on the reward and next state. Training continues until the policy shows stable EDR distribution and minimal Q-value drift.
+\begin{algorithm}[h]
+\caption{\textbf{Q-Learning (Fixed Step Horizon)}}
+\label{alg:qlearning-fixed}
+\textbf{Algorithm parameters:} step size $\alpha \in (0, 1]$, discount factor $\gamma \in [0,1)$, small $\epsilon > 0$\\
+Initialize $Q(s, a)$ arbitrarily for all $s \in \mathcal{S}^+, a \in \mathcal{A}(s)$, except that $Q(\text{terminal}, \cdot) = 0$
 
-\textbf{Transition Sampling:} Though Q-Learning does not require an explicit model, we precompute transition outcomes to accelerate training. These incorporate entanglement aging, generation, and stochastic swap success, and are sampled at each timestep to simulate realistic dynamics.
+\ForEach{episode}{
+    Initialize $S$\\
+    \For{$t = 0$ \KwTo maxStep}{
+        Choose $A$ from $S$ using policy derived from $Q$ (e.g., $\epsilon$-greedy or softmax)\\
+        Take action $A$, observe reward $R$ and next state $S'$
+        \[
+        Q(S, A) \mathrel{+}= \alpha \left[ R + \gamma \max_{a} Q(S', a) - Q(S, A) \right]
+        \]
+        $S \leftarrow S'$
+    }
+}
+\end{algorithm}
 
-\textbf{Convergence Monitoring:} We monitor average Q-value changes across episodes and track EDR stability across goals to assess convergence. Notably, training-phase EDRs do not always match post-simulation performance, indicating potential divergence between training dynamics and runtime behavior—a limitation also observed in related RL works.
 
-Q-Learning remains a powerful baseline for fairness-aware scheduling in quantum environments, particularly when transition models are unknown or dynamic. Despite its constraints, it offers a lightweight and interpretable framework for learning under uncertainty.
+We include EDR values directly in the state to preserve the Markov property while still embedding fairness history. This design enables Q-learning to make fairness-aware decisions while remaining purely reactive.
 
-
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/qLearning.png}
+  \caption{Illustration of Q-Learning updates over a sample entanglement scheduling trajectory.}
+  \label{fig:qLearning}
+\end{figure}
 
 \subsubsection{Challenges}
-We run into a similar issue as Value Iteration, where we do not prioritize the do nothing action as much - as the sustem just struggles to comprehend the information that goes into making such a decision. This motivated us to use N-Step SARSA, however we stuck with an implementation of Q-learning to serve as a good baseline to promote the benfiits of look-ahead modelling (in-addition to the single step SARSA implementation) to also validate our models correctness. Adding EDRS into the action state space, instead of calucalting them later... drastically improvced our performance. It seems that we cannot extend Q-learning to multi-step situations, and it would take a great deal... as it requires expecitoatnon..., explain amtheamtica... it breaks
+Despite its adaptability, Q-Learning struggles in this setting due to its inability to propagate long-term rewards. Since fairness rewards are only granted upon successful multi-hop entanglement delivery, early actions—such as waiting or initiating link generation—go uncredited. This leads to reactive behaviour that overlooks the long-term value of patient scheduling and often prioritizes immediate, high-probability swaps. The issue is particularly pronounced in nested-swap policies, where it may take multiple steps to sequentially prepare the necessary intermediate entanglements before a goal can complete. Without multi-step credit assignment, the algorithm fails to recognize the value of such preparatory actions and can converge to greedy, unfair behaviours.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{N-Step SARSA} 
-Explain what it is, i.e. off / on policy, why we think it might be a good fit
-long hop in sarsa falls sort.. because we eventually fall back to a. stationary... so not nesscarily higher rewardsThis only works well if the agent keeps seeing delayed success, which is rare for long-hop goals unless explicitly encouraged.If the agent doesn't see success frequently enough, its estimate of the future reward for that long-hop goal stays low.How far does the model need to look ahead? Does it bear any relation to performance or something like maxAge?
+While it may seem natural to extend Q-Learning to $n$-step updates, such extensions are not straightforward. Naively applying multi-step targets in an off-policy setting introduces bias unless properly corrected (e.g., via importance sampling), which complicates both implementation and convergence \cite{sutton2018reinforcement}. In fact, Sutton's text avoids introducing an $n$-step Q-learning algorithm for this reason, instead framing off-policy extensions through more general formulations like off-policy $n$-step SARSA. Given these limitations, this work adopts N-step SARSA as a more stable and principled approach: it supports multi-step return propagation, learns from actual agent behaviour, and is inherently well-suited to the delayed, event-driven nature of fairness-aware quantum scheduling.
 
+
+
+
+
+
+
+\subsection{N-Step SARSA}
+
+\subsubsection{Motivation and Advantages}
+
+N-step SARSA is an \textbf{on-policy} temporal-difference reinforcement learning algorithm that extends standard SARSA by propagating reward over multiple time steps. It bridges one-step TD methods, which struggle with delayed rewards, and Monte Carlo methods, which delay learning until full episode termination. In quantum scheduling—where rewards are sparse, delayed, and tightly linked to long sequences of successful operations—N-step SARSA aligns well with the event-driven, probabilistic structure of the environment.
+
+Unlike Q-learning, which updates based on hypothetical optimal actions, N-step SARSA learns directly from experienced trajectories. This makes it more stable in noisy environments and avoids overestimating unlikely paths. It is especially well-suited for fairness-aware quantum networks, where delivery requires multiple coordinated steps and where early decisions (e.g., waiting or link generation) should be credited if they lead to future success.
+
+Its main advantage lies in its ability to propagate rewards across \(n\) timesteps, allowing earlier actions—such as partial progress in nested-swap scenarios—to be recognized even if entanglement is only consumed later.
+
+\subsubsection{Trade-offs and Design Considerations}
+
+There is, however, a critical design trade-off. If \(n\) is too small, the method degenerates into short-sighted TD learning. If \(n\) is too large, it approximates a Monte Carlo method, increasing variance and delaying learning. In sparse environments with rare success signals, large \(n\) values can lead to unstable updates or weak credit assignment. [Online what values are common]
+
+On-policy learning—while stable—limits the algorithm’s ability to learn from alternate actions or off-policy data. This can slow convergence when beneficial paths are rarely sampled. However, in fairness-critical environments, this alignment between experience and learning improves reward consistency and avoids overestimating unjustified policies.
+
+We do not incorporate eligibility traces in our implementation. Although they offer more granular credit assignment, they require additional tuning and can amplify instability in continuous, non-episodic settings. Given our rolling reward structure and minimal per-step feedback, we found standard N-step returns sufficient to capture fairness propagation.
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.8\linewidth]{paper/figures/sarsa.png}
-  \caption{Show how SARSA updates, maybe make this into TWO grids instead of 3.}
+  \caption{Illustration of N-step SARSA update over actual agent trajectory.}
   \label{fig:sarsa}
 \end{figure}
-\subsubsection{Justification}
-
-N-step SARSA is particularly well-suited to environments with sparse and delayed rewards—like quantum networks—where successful actions such as multi-hop entanglement swaps only yield feedback after several intermediate steps. Unlike one-step methods that struggle in such settings, N-step SARSA propagates rewards across multiple time steps, allowing the agent to better associate early actions with eventual success. This is critical in our system, where no rewards are given unless a complete entanglement goal is achieved.
-
-Another advantage is its temporal sensitivity. Entanglement links are fragile and expire quickly due to decoherence, making it essential that the policy rewards sequences of well-timed actions. N-step SARSA naturally aligns with this constraint, as it can reinforce short chains of successful operations before entanglement degrades. Furthermore, as an on-policy algorithm, it updates based on the actual actions taken—offering more grounded learning compared to Q-learning, which may overestimate the value of rarely successful paths. The aggregation of reward over multiple steps also leads to smoother, more stable convergence in noisy environments.
-
-That said, N-step SARSA comes with trade-offs. The choice of step size \( n \) is crucial: if \( n \) is too small, the algorithm reduces to one-step SARSA, limiting its ability to propagate delayed rewards. Conversely, if \( n \) approaches the episode length, it effectively becomes a Monte Carlo method—delaying learning until the end of long action chains, which can increase variance and make convergence unreliable. Additionally, because it is on-policy, N-step SARSA is more sensitive to the current policy’s behavior, which may limit its responsiveness in dynamic environments. 
-
-N-step SARSA strikes a compelling balance between short-term reactivity and long-term planning. It complements Q-Learning by learning from experienced trajectories, offering an alternative perspective on fairness-aware scheduling that prioritizes temporal consistency and reward propagation in dynamic quantum environments.
-
 
 \subsubsection{Model Implementation}
-Our N-step SARSA implementation is tailored for environments with sparse, delayed rewards and fragile state transitions—features that typify quantum networks. It extends the standard SARSA algorithm by propagating reward information over multiple steps, enabling the agent to associate long-term success with sequences of actions rather than single decisions.
 
-Unlike Q-Learning, which is off-policy and uses the maximum future Q-value for updates, N-step SARSA is on-policy and updates based on the actual actions taken. This allows it to learn more grounded policies that reflect what the agent experiences, rather than hypothetical optimal paths—an important trait in highly stochastic environments like ours.
+We adapt the N-step SARSA algorithm for continuous environments with no terminal state, based on Sutton and Barto \cite{sutton2018reinforcement}. At each timestep, the agent collects a buffer of transitions and updates past state-action pairs using a bootstrapped return.
 
-Each state-action pair is updated using the $n$-step SARSA update rule:
+The $n$-step update is defined as:
 \[
 Q(S_\tau, A_\tau) \leftarrow Q(S_\tau, A_\tau) + \alpha \left[ G - Q(S_\tau, A_\tau) \right]
 \]
@@ -949,9 +1102,8 @@ where \( G \) is the $n$-step return:
 \[
 G = \sum_{i=\tau+1}^{\tau+n} \gamma^{i - \tau - 1} R_i + \gamma^n Q(S_{\tau+n}, A_{\tau+n})
 \]
-and $\tau$ is the time at which the update occurs. This formulation allows rewards from successful swaps or goal completions to influence earlier decisions, helping the agent learn more cohesive strategies in the presence of delayed feedback.
 
-We extend the base N-Step algorithm from Sutton and Barto \cite{sutton2018reinforcement} to function continuous environments, with no terminal state.
+We adapt N-step SARSA for a continuous, non-episodic environment, as our quantum network has no terminal states and fairness must be preserved indefinitely. Entanglement decays probabilistically and is constantly regenerated, making episodes unnecessary. Our rolling-window reward structure avoids long-term imbalance, removing the need for resets. This change was only required for SARSA; Q-learning does not rely on episodes and uses fixed-length training loops for structure and logging.
 
 \begin{algorithm}[h]
 \caption{\textbf{Continuous N-Step SARSA}}
@@ -974,158 +1126,432 @@ $t \gets 0$\;
 }
 \end{algorithm}
 
-\textbf{Exploration Strategy:} The agent follows an $\epsilon$-greedy policy. At each step, it selects either a random action (with probability $\epsilon$) or the best-known action based on current Q-values. This ensures continued exploration while favoring high-value strategies as learning progresses.
+\subsubsection*{Selecting $n$ in N-step SARSA}
 
-\textbf{Training Loop:} Training proceeds continuously without explicit terminal states, using the infinite-horizon formulation of SARSA adapted from Sutton and Barto. At each timestep, the agent stores recent state, action, and reward information in a buffer. Once the buffer reaches $n$ steps, the update is performed using the cumulative return and bootstrapped Q-value, allowing learning to occur mid-episode rather than waiting for full episode termination.
+Choosing the right $n$ in N-step SARSA involves a trade-off between bias and variance. If $n$ is too small, the algorithm behaves like one-step TD learning—failing to assign credit to early actions that enable future success. Conversely, overly large $n$ approximates Monte Carlo returns, which:
 
-\textbf{Transition Sampling:} We reuse the same offline precomputed transitions as in Q-Learning. While the algorithm does not require prior knowledge of probabilities, using cached samples accelerates simulation and ensures fairness across comparisons.
+\begin{itemize}
+    \item Increase variance, as returns accumulate over longer, noisier trajectories;
+    \item Delay updates, since learning must wait for full $n$-step transitions;
+    \item Over-credit early actions that may not have caused observed rewards, especially when memory expiry or stochastic failures intervene;
+    \item Diminish effectiveness when \texttt{maxAge} is small, as distant past actions are unlikely to influence rewards before entanglement expires.
+\end{itemize}
+
+\textbf{Choosing $n$ relative to \texttt{maxAge}:} In our environment, we select $n$ based on \texttt{maxAge}, which defines the time window within which entanglements remain usable. For \texttt{maxAge} = 3, we consider $n \in \{2, 3\}$; for larger memory budgets (e.g., \texttt{maxAge} = 5+), we explore $n \in \{3, 4, 5\}$. These values aim to propagate rewards over meaningful timescales without amplifying variance or crediting unrelated actions—especially under stochastic failure.
+
+This mirrors practice in the RL literature, where $n \in [1, 10]$ is typical depending on task horizon and reward sparsity \cite{sutton2018reinforcement}. However, in stochastic quantum networks with fragile, event-driven rewards, tuning $n$ to reflect system timescales—particularly memory lifetimes—is crucial for learning stable, fairness-aware policies.
+
+
+Finally, it is worth noting that the effects of $n$ interact with both the discount factor $\gamma$ and the fairness sensitivity $\alpha$: higher $\gamma$ increases the influence of delayed returns, while higher $\alpha$ amplifies fairness pressure, both of which can accentuate the impact of $n$ on learning dynamics.
+
 
 
 
 \subsection{Verification, Validation, and Testing}
-We improved this through our slow decay of epsilon values to ensure we explore everything... coutn how many times we visit each state and ensure we visit everything at leastst 100 times Mention how this is how we measure convergence for BOTH Q-learning and N-Step SARSA
-
 
 \subsubsection{Verification}
-Verification asks whether the system was built correctly and behaves as intended. In the absence of prior implementations or reusable codebases, we applied two strategies: abstracted unit testing and manual debugging. Core functions—such as entanglement aging, swap execution, and path finding—were tested individually to ensure they followed the specified logic. Manual inspections were carried out by tracing EDR values and Q-values throughout early simulations to validate whether the agent behaved as expected.
 
-All three RL algorithms share a common Q-table structure of $(\text{state}, \text{action}) \rightarrow \text{reward}$, which allowed us to unify the simulation engine across implementations. This design ensured that the simulation logic remained consistent across policies. During execution, we logged selected actions, their success outcomes, and frequency, enabling us to confirm that agents were selecting viable actions aligned with their learning objectives. We also tested a range of edge cases—such as $p_{\text{swap}} = 0$ and $p_{\text{swap}} = 1$—to evaluate behavior under extreme parameter conditions.
+Verification confirms correct implementation of the simulation environment and learning algorithms. In the absence of pre-existing codebases, we used modular unit testing and manual tracing to validate core components—such as entanglement aging, swap logic, and path resolution. Deterministic behavior was confirmed under controlled conditions (e.g., $p_{\text{swap}} \in \{0,1\}$).
+
+All agents shared a unified Q-table structure mapping $(\text{state}, \text{action}) \rightarrow Q$-value, simplifying debugging and logging. We traced early episodes manually to verify behavior such as reward computation, swap application, and EDR evolution matched expectations.
 
 \subsubsection{Validation}
-Validation addresses whether we built the right thing—whether the system meets its intended objectives. As empirical benchmarks are scarce in this domain, we designed multiple validation strategies spanning statistical, analytical, and behavioral analysis.
 
-To account for stochasticity, we used cross-validation with multiple random seeds and plotted confidence intervals to assess consistency. These repeated runs helped identify variability in learning outcomes and highlighted occasional divergence in results depending on specific parameter combinations or random seeds. [MORE TO TALK ABOUT ONCE I HAVE RESULTS I.E. MIGHT TAKE MEAN.]A short paragraph on how randomness is handled consistently across: Edge generationSwap failuresAction samplingAlso mention any seeding strategy for reproducibility (which you already do later, but reiterating it here helps).
+Validation ensures that learned policies align with intended fairness objectives. We define convergence as the maximum Q-value change falling below \(10^{-4}\) for 100 consecutive iterations. However, due to environmental stochasticity, occasional runs converge prematurely to poor local minima. These outliers are identified through visual inspection and excluded from final plots. [ASK THIRU]
 
-The greedy algorithm was used extensively as a baseline. Not only is it simple to implement, but it serves as a natural comparator for evaluating fairness and throughput. Each RL method was also validated against the others under identical conditions, consistently producing similar or expected results—further reinforcing correct implementation.
+To assess policy stability, we train each model across 10 random seeds. Each trained model is then evaluated with an independent set of random seeds. This two-stage seeding process allows us to isolate learning variability from evaluation noise and supports statistical averaging. Resulting metrics are plotted as mean with confidence intervals, and individual trajectories are inspected to catch anomalous cases.
 
-We performed ablation studies targeting critical parameters (e.g., topology, $p_{\text{swap}}$, and $p_{\text{gen}}$), which offered insight into model behavior and simplified debugging. Action trace logs helped identify whether the agent's decisions aligned with expected policy behavior; in cases of abnormal results, we stepped through simple network topologies manually to confirm or rule out anomalies.
+Greedy baselines serve as performance anchors, ensuring learned policies outperform naive heuristics under identical conditions. All models are validated under consistent topologies, traffic distributions, and reward functions for fair comparison.
+
+We also conduct analytical throughput checks by estimating the maximum theoretical EDR achievable given $p_{\text{gen}}$, $p_{\text{swap}}$, and topology. Runs exceeding this bound suggest simulation or reward calculation errors and are flagged.
+
+Additional validation includes:
+\begin{itemize}
+    \item \textbf{Exploration Coverage:} We track action selection frequencies across nodes and goals to confirm agents encounter relevant states.
+    \item \textbf{Ablation Studies:} We vary parameters such as \texttt{maxAge}, topology, and swap success probability to probe failure modes and learning dynamics.
+    \item \textbf{Trace Inspection:} Action logs help verify that agents behave as intended under contention.
+\end{itemize}
 
 \subsubsection{Testing}
-Testing refers to how we measured and observed correctness and performance throughout development and experimentation.
 
-We noticed that EDR values during training differed significantly from simulation results across all models.This discrepancy may be due to.. [EXPLORE FURTHER]. Therefore, all final results reported are based on post-training simulations for consistency and clarity.
+Testing quantifies agent performance and convergence behavior. We monitor the average absolute Q-value change ($\Delta Q$) throughout training and use EDR plateaus as an indicator of policy stabilization. 
 
-In line with reinforcement learning conventions, we trained each model until convergence. For Q-Value Iteration, this corresponded to convergence of the Q-table under Bellman updates. For Q-Learning and N-Step SARSA, convergence was assessed by [LEAVE this blank].
+To detect insufficient exploration, we no longer rely on state binning. Instead, we track EDR values directly: in wait-swap policies, persistently low EDR for a goal suggests it is under-explored; in swap-asap settings, we verify that all goals achieve non-zero delivery over time. For nested-swap policies, we additionally inspect how frequently intermediate entanglement configurations are realized—i.e., whether the sub-paths needed for full delivery are sufficiently visited. This ensures that multi-hop chains are being meaningfully explored and not bypassed due to short-sighted learning.
 
-For all learning methods, we waited for the Q-tables to converge before running simulations. This was determined by monitoring the average change in Q-values over time. We tracked the $\Delta Q$ between successive updates and continued training until the values stabilized below a defined threshold. To further confirm convergence, we verified that the Entanglement Distribution Rate (EDR) for each goal plateaued, indicating that the learned policies had become stable.
+Training uses softmax exploration with temperature decay; testing is conducted with fixed Q-values and deterministic policy selection to eliminate online noise. Each model is re-evaluated under fresh random seeds, and final metrics include both fairness (Jain’s index) and throughput (EDR), plotted using rolling windows to expose stability and volatility.
 
-We monitored Q-table growth to evaluate memory usage, particularly as large topologies led to exponential state-action pair expansion. This constrained us to using tuple-based data structures rather than higher-level graph libraries (e.g., `networkx`) to avoid excessive memory overhead. These limitations influenced our decision not to explore multiplexing, which would have introduced additional state complexity.
-
-To ensure fairness in model comparison, each learning method was tested under identical simulation parameters and all the plots generated for each policy, are under the same conditions.. Each configuration was repeated across 10 random seeds to reduce stochastic variability, because aggregating for the mean value (while visually checking for outliers). Throughout testing, we logged EDR values, action selections, fairness metrics, and memory use. This enabled consistent evaluation across baselines and learning models.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\newpage
-x
-\newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Results}
-EVIDENCE FOR EVOLUTIONARY IS HERE! WHY HAVE I DONE THIS. DESCRIBE THE DATA, CROSS REFERENCE OTHER RESULTS  what are we looking for / optimising for?
-
-\subsection{Exploration \& Convergence}
-We include a plot of our converge, to validate that our results are valid. We also repeat our results multiple
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/placeholder.png}
-  \caption{Proof showing convergence all the models we later use for results. Likely Q-Learning, N-Step SARSA and the different reward functions}
-  \label{fig:converge}
-\end{figure}
-
-Include data about visitation and exploration.... Maybe just some statistics, but we essentially just need to show how we have explored every [WHAT METRICS / PLOT CAN USE HERE?].
+This layered evaluation ensures reproducibility, robustness to randomness, and sensitivity to fairness-driven scheduling dynamics.
 
 
-\subsection{Policy Evaluation}
-[FOR FIXED PRAM, COMPARE THE POLICIES PERFORMANCE, AREA OF PARETO CURVE, MENTION SHAPE, PERFORMANCE AS Pswap \& PGEN CHANGES CHANGES]
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/placeholder.png}
-  \caption{}
-  \label{fig:pareto}
-\end{figure}
-
-\subsubsection{Reward Evaluation}
-[FOR A FIXED MODEL, LIKELY SARSA, COMPARE THE DIFFERENT REWARDS FUNCTIONS (AFTER TUNING?, VARYING OVER ]
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/placeholder.png}
-  \caption{Similar plot to policy evaluation but with fixed policy (Ideally our best) but with different rewards...}
-  \label{fig:reward}
-\end{figure}
-
-\subsection{Sensitivity to Parameters}
-Environment realism matters
-[TWO PLOTS OF HEATMAPS OF PGEN AND PSWAP WITH VALUES 1) THROUGHPUT 2) JAINS FARINESS]
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/output.png}
-  \caption{Pgen vs pSwap for Throuhgput}
-  \label{fig:param}
-\end{figure}
-
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=0.8\linewidth]{paper/figures/output.png}
-  \caption{Pgen vs pSwap for Throuhgput}
-  \label{fig:param}
-\end{figure}
-
-[EXPLORING EDGE CASES AND SENSITIVITY TO PARAMETERS]
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Evaluation}
-%- Why would we compare models?
-\subsection{Analysis of Reward Function}
-% Did the log-ratio utility behave as expected? 
-% Did it encourage fairness without destroying throughput?
-% When is it better than Jain or min-max?
-
-\subsection{Evaluation of Learning Algorithms}
-% Q-Learning vs SARSA vs Value Iteration
-% When does each struggle / succeed?
-% Any overfitting to EDRs?
-% long hop in sarsa falls sort.. because we eventually fall back to a. stationary... so not nesscarily higher rewardsThis only works well if the agent keeps seeing delayed success, which is rare for long-hop goals unless explicitly encouraged.If the agent doesn't see success frequently enough, its estimate of the future reward for that long-hop goal stays low.
-
-\subsection{Topology Effects}
-% Which topologies produce starvation?
-% Where is fairness hardest to maintain?
-% Ideal topology traits?
-% Asymmetric graphs (star, chain, bottlenecks)
-% Symmetric graphs (dumbbell, ring)
-% Measure which topologies are “fairness friendly”
-% Identify where starvation is most likely
-Our simulation allows us to compare against a theoretical upper bound on throughput under full success and instant swaps.
-We also conducted a basic analytical bounding of the theoretical maximum throughput of small test networks. This helped set expectations and identify when results were potentially inflated or flawed. These calculations were non-trivial due to overlapping entanglement paths, variable edge aging, and probabilistic success rates. [TALK TO THIRU, GIVE AN EXAMPLE HERE.. MAYBE A MATHEMATICAL FORMULA..]
-[You mention "theoretical max throughput" — could you include a simple derived bound in one example network? This would validate that the model isn’t hallucinating.
-
-\subsection{Exploration and State Coverage}
-% Visitation counts, softmax effectiveness
-% Was your exploration thorough enough?
-
-\subsection{Engineering Process and Validation}
-% Did you verify your environment and agents?
-% How did you test edge cases?
-% Did your logs help confirm correct behavior?
-
-\subsection{Summary of Evaluation}
-% Overall findings, tradeoffs, strengths/weaknesses
-% Key takeaways for future work
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Conclusion, 1 page}
-% Open Questions
-
-\section{Extensions}
-\section{Future Work}
-
-\section{Code Availability}
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \newpage
 .
 \newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Results and Evaluation}
+
+To isolate core behaviours and enable meaningful comparisons, we begin with a fixed environment configuration. Rather than exhaustively varying all system parameters, we select a representative setup that emphasizes fairness under contention. Table~\ref{tab:fixedParams} summarizes the parameters used across baseline experiments.
+
+We adopt a 6-node topology with two user pairs, (0,5) and (2,4), whose paths intersect at a single bottleneck edge (3,4)—a scenario designed to induce competition and expose fairness dynamics. We fix \( p_{\text{gen}} = p_{\text{swap}} = 0.6 \), based on ablation results showing that higher entanglement rates make fairness trivially achievable. In contrast, the 0.6 setting maintains sufficient entanglement for learning while still presenting meaningful stochastic challenges.
+
+\begin{table}[H]
+  \centering
+  \label{tab:fixedParams}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Network topology   & 6 nodes (see Figure~\ref{fig:fixedResults}) \\
+    User pairs         & (0,5) and (2,4) \\
+    \(p_{\text{gen}}\) & 0.6 \\
+    \(p_{\text{swap}}\)& 0.6 \\
+    \texttt{maxAge}    & 2 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+We choose this topology, as it make it clear to highlight the contention edge, and allows us to also easily explore the benefits of nested swapping -  as edge 1 and 5 can form a bypass for applciation (3,4) to run through.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/fixedResults.jpg}
+  \caption{Topology used for fixed-parameter experiments. Two user goals (A–B and C–B) contend over edge (3,4), making it a fairness-critical bottleneck.}
+  \label{fig:fixedResults}
+\end{figure}
+
+We begin with two user goals to isolate the core fairness-throughput trade-off and avoid interaction effects that could obscure policy evaluation. This also mirrors scenarios like shared bottleneck links between two clients. Our code generalizes to multiple goals, and Section~\ref{sec:tripleGoal} presents experiments with three competing goals to validate scalability.
+
+
+
+
+
+\subsection{Convergence and Stability}
+
+In reinforcement learning, convergence refers to the point where value estimates or policy behaviour cease to change meaningfully. In our work, we define \textbf{value convergence} as the point at which the average Q-value update $\Delta Q$ across training episodes falls below a predefined threshold, while \textbf{policy stability} refers to consistent action selection and performance metrics (e.g., EDR) across repeated simulations.
+
+Due to the stochastic nature of entanglement generation ($p_{\text{gen}}$) and swap success ($p_{\text{swap}}$), \textbf{true convergence is unattainable in the strictest sense}. In such systems, convergence must be understood \emph{in expectation}, not as an absolute guarantee. Even when Q-values appear to stabilize, they may continue to fluctuate due to environmental randomness. Crucially, Q-value stability does not always indicate policy stability—especially when multiple actions yield near-identical expected returns.
+
+
+To ensure robustness, we run extended post-training simulations using fixed Q-values and fresh random seeds. A policy is considered \textbf{stable in expectation} if its per-goal EDR and fairness index vary by no more than 5\% across simulations.
+
+\subsubsection*{Q-value Convergence by Goal Length}
+
+We monitor convergence using the average absolute Q-value change per timestep.\footnote{
+Greedy agents, which do not update Q-values, do not exhibit value convergence. However, their policy behavior remains stable, as discussed in Section~\ref{sec:policyEvaluation}.
+}
+
+Figure~\ref{fig:perGoalConvergence} shows convergence for two goals—(2,4) and (0,5)—under identical training conditions. We observe:
+
+\begin{itemize}
+    \item Shorter goals converge quickly with low-variance Q-value updates.
+    \item Longer goals show more persistent fluctuations, as transitions involve more stochastic steps.
+\end{itemize}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/perGoalConvergence.png}
+  \caption{Per-goal Q-value convergence for N-step SARSA with $p_{\text{gen}} = p_{\text{swap}} = 0.7$. Goal (0,5) shows more persistent fluctuations due to compounded stochasticity.}
+  \label{fig:perGoalConvergence}
+\end{figure}
+
+\subsubsection*{Global Convergence Sensitivity to Environment}
+
+We examine convergence behavior under varying $p_{\text{swap}}$ values. Figure~\ref{fig:compareConvergence} shows that:
+
+\begin{itemize}
+    \item High $p_{\text{swap}} = 0.9$ leads to rapid convergence, driven by consistent rewards.
+    \item Low $p_{\text{swap}} = 0.1$ yields flat Q-values—not due to successful learning, but due to sparse reward signals.
+    \item Intermediate $p_{\text{swap}} = 0.5$ results in slower, noisier convergence due to inconsistent feedback.
+\end{itemize}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/compareConvergence.png}
+  \caption{Global Q-value magnitude over time for varying swap probabilities. High $p_{\text{swap}}$ accelerates convergence; low $p_{\text{swap}}$ causes reward starvation and premature flattening.}
+  \label{fig:compareConvergence}
+\end{figure}
+
+\subsubsection*{Effect of Entanglement Memory Lifetime (\texttt{maxAge})}
+
+Figure~\ref{fig:maxageConvergence} examines how convergence is affected by entanglement memory duration. Higher \texttt{maxAge} values initially lead to slightly larger Q-value fluctuations due to an expanded state space and increased temporal complexity. However, all models eventually stabilize to comparable magnitudes.
+
+In particular, agents trained with \texttt{maxAge} values of 1 and 20 reach similar stability levels within a comparable number of training steps. This suggests that while long memory lifetimes increase early training variance, they do not significantly impact convergence time under our reward structure.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/maxageConvergence.png}
+  \caption{Q-value convergence for different \texttt{maxAge} settings. Longer-lived entanglements increase early variance but all converge similarly.}
+  \label{fig:maxageConvergence}
+\end{figure}
+
+\subsubsection*{Stability of System Metrics}
+
+To assess behavioral stability, we track EDR and Jain’s fairness index across long post-training simulations:
+
+\begin{itemize}
+    \item With a rolling window applied, both metrics appear smooth and consistent under fixed policies.
+    \item Larger windows improve signal stability but dampen responsiveness to short-term imbalance.
+    \item Smaller windows reveal higher volatility, reflecting sensitivity to short-term noise.
+\end{itemize}
+
+This highlights a trade-off: longer horizons promote fairness stability, but short-term guarantees may degrade under noise.
+
+\subsubsection*{Effect of Fairness Sensitivity Parameter $\alpha$}
+
+Varying the fairness sensitivity parameter $\alpha$ significantly affects convergence behavior. Very low values dilute the reward signal, while excessively high values make the agent overly cautious and reactive. We found that $\alpha = 1$ provides a balanced trade-off between throughput and equity. Further analysis is presented in Section~\ref{sec:alphaFairness}.
+
+\subsubsection*{[TODO] Convergence in Nested Swap Policies}
+
+[TODO] This subsection will explore how convergence patterns differ in nested swap scenarios—particularly where intermediate entanglements must be sequentially generated before final delivery is possible. We will analyze whether these policies converge more slowly due to deeper temporal dependencies, and whether specific entanglement sets or action chains are underexplored.
+
+
+\subsection{Exploration Behaviour}
+
+We also investigated whether agents were sufficiently exploring the state space during training. For the wait-only policy (i.e., without intermediate swaps), we guaranteed state visitation through the simplicity of our non-cyclic topologies. Here, exploration could be trivially confirmed by observing whether entanglement occurred between all goal nodes over time and have converged \ref{fig:finaledrExmaple}. 
+
+For policies employing nested swapping, we observe [TODO].
+
+
+
+
+
+
+
+
+\subsection{Reward Function}
+
+Our reward function plays a central role in guiding learning behavior. In this section, we compare and evaluate several reward formulations for fairness-aware entanglement scheduling: logarithmic utility, linear utility, shifted-log variants (to address undefined log at zero), and partial reward schemes.
+
+\subsubsection*{Reward Variants}
+
+We evaluated the following reward functions:
+
+\begin{itemize}
+    \item \textbf{Logarithmic utility (default)}: $\log(1 + \text{EDR}_i)$ — promotes fairness with stable gradients even at low EDR.
+    \item \textbf{Linear utility}: $\text{EDR}_i$ — prioritizes throughput but weakens fairness incentives.
+    \item \textbf{Partial reward variant}: Modified log reward granting partial credit for failed swaps (e.g., $0.5\times$ reward on unsuccessful attempts).
+    \item \textbf{Unshifted log}: $\log(\text{EDR}_i)$ — sensitive to small EDR values; included for completeness but prone to instability.
+\end{itemize}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/sparseRewards.png}
+  \caption{Pareto comparison of fairness and throughput across reward schemes. Shifted-log performs best. Partial rewards show high throughput but collapse in fairness as $p_{\text{swap}}$ increases.}
+  \label{fig:sparseRewards}
+\end{figure}
+
+Figure~\ref{fig:sparseRewards} shows that our main reward function—based on $\log(1 + \text{EDR}_i)$—offers the best trade-off between fairness and throughput. It combines the curvature of logarithmic utility with stability near zero, supporting equitable policies even in sparse delivery regimes.
+
+\textbf{Logarithmic reward ($\log(1 + \text{EDR}_i)$):} This variant consistently dominates the Pareto frontier. It prioritizes underserved goals without destabilizing gradients, making it well-aligned with proportional fairness.
+
+\textbf{Linear utility ($\text{EDR}_i$):} Though it achieves slightly higher throughput, it weakens fairness pressure. The lack of curvature leads agents to over-serve high-frequency paths, causing service imbalance.
+
+\textbf{Partial reward variant:} Though helpful early on, rewarding failed attempts distorts incentives. Agents favor short, high-probability swaps that earn credit without completing deliveries. This marginally boosts throughput but significantly degrades fairness—especially as $p_{\text{swap}}$ increases.
+
+\textbf{Outlook for partial rewards:} These results do not imply partial rewards are universally flawed. In highly sparse environments or curriculum learning setups, partial credit could aid convergence. They may also prove useful in systems with retry penalties or delayed planning feedback. However, in our fairness-focused setting, they misalign agent behavior.
+
+\textbf{Summary:} In fairness-aware quantum scheduling, \textbf{reward density must be handled with care}. Denser signals—like partial rewards—can accelerate learning but often incentivize superficial progress over meaningful delivery. Their impact is also topology-dependent: in some environments, these rewards perform comparably to full-reward schemes, but in sparse or high-contention settings, they degrade fairness by over-rewarding easy, high-probability actions while ignoring harder, underserved goals.
+
+
+
+
+\subsubsection*{Effects of Fairness Window Size}
+
+In our framework, fairness is computed using a rolling average window $w$ over entanglement delivery rates (EDR). This window defines how recent delivery events influence fairness estimates and can be configured independently for training and evaluation.
+
+We selected window sizes of 100–100000 to mirror realistic temporal behaviour in near-term quantum hardware. For instance, with \texttt{maxAge} values between 1 and 10 timesteps (representing microsecond to millisecond-scale coherence times), a fairness window of \( w = 1000 \) reflects system behaviour over approximately 0.01–1 seconds \ref{sec:qubitLifetimes}. This ensures that the EDR signal reflects meaningful, real-time delivery dynamics while remaining computationally tractable.
+
+
+To isolate the impact of $w$, we trained and evaluated agents with \textbf{matching window sizes}—avoiding mismatches that could distort interpretation. Table~\ref{tab:fairness-windows} summarizes results across four settings, with identical $w$ for training and simulation:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Window} & \textbf{Jain’s Index} & \textbf{Throughput} \\
+\hline
+100      & 0.6971 & 0.1770 \\
+1000     & 0.5890 & 0.2485 \\
+10000    & 0.5803 & 0.2850 \\
+100000   & 0.6491 & 0.2604 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+We observe a trade-off between responsiveness and stability:
+
+\begin{itemize}
+    \item \textbf{Short windows} (e.g., $w = 100$) yield reactive agents that respond quickly to imbalances but may overcompensate, leading to fairness volatility and lower throughput.
+    \item \textbf{Longer windows} (e.g., $w = 10000$ or $100000$) smooth fluctuations, promoting more stable learning and higher overall throughput, though possibly at the cost of short-term equity.
+    \item Notably, $w = 100000$ achieves a strong balance between fairness (Jain’s = 0.6491) and throughput (0.2604), suggesting that large windows can succeed if used consistently during both learning and evaluation.
+\end{itemize}
+
+We recommend aligning $w_{\text{train}}$ and $w_{\text{eval}}$ to ensure interpretability. Fairness metrics are not invariant to $w$, and comparing policies trained with different windows can misrepresent their behaviour.
+
+
+
+\subsubsection*{[TODO]Effect of Varying \(\alpha\)}
+
+Our primary reward function corresponds to proportional fairness (\(\alpha = 1\)). To test sensitivity, we varied \(\alpha\) across experiments.
+
+\begin{itemize}
+    \item \(\alpha < 1\): Encourages efficiency but leads to inequity.
+    \item \(\alpha > 1\): Strong fairness bias but causes throughput loss and learning instability.
+\end{itemize}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/alphaFair.png}
+  \caption{Impact of \(\alpha\)-fairness on equity-efficiency trade-off. \(\alpha=1\) (proportional fairness) offers best balance.}
+  \label{fig:alphaFAIR}
+\end{figure}
+
+\subsection{[TODO]Evaluation of Learning Algorithms} \label{sec:policyEvaluation}
+remember to mention some concerete failure cases... where does greedy win, where does q-learning win.. why. You want $n$ to be long enough to capture the delayed reward effects that arise from preparing and holding entanglement, but short enough to avoid high variance or crediting expired entanglements. as if maxage < n-lookahead... it starts to before to prpbabalsititc, hence high variance. 
+
+\begin{itemize}
+    \item N-Step Finding the Optimal Lookahead for n-Step
+    \item Q-Learning vs N-Step SARSA vs Greedy... plot the pareto curves for each as we vary pGen and/or pSwap
+    \item Where does each struggle / succeed?
+    \item Grid of pSwap vs pGen measuring Jain's \& Throughput
+    \item Which polices use/waste more entanglements
+    \item As nLookahead increase, must vary gamma and exploration parameters
+\end{itemize}
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.8\linewidth]{paper/figures/grid.png}
+  \caption{Pgen vs pSwap for Throuhgput... we achieve high fairness far before we achieve higher throughput (which is more linear)}
+  \label{fig:grid}
+\end{figure}
+
+
+
+
+
+
+\subsection{Theoretical Bounds and Empirical Evaluation}
+
+To understand how effective our learned policies are, we compare observed throughput with theoretical upper bounds on the entanglement distribution rate (EDR). These bounds reflect idealized scenarios and are useful for assessing policy efficiency.
+
+\subsubsection*{Ideal Throughput in Linear Paths}
+
+Consider a $d$-hop linear path. Let $p_{\text{gen}}$ be the success probability of entanglement generation on each link and $p_{\text{swap}}$ the success rate of Bell-state measurements.
+
+\paragraph*{Strict Synchronization Bound (No Memory)}
+When \texttt{maxAge} = 1, entanglement must be freshly generated on every link in a single timestep:
+\[
+\text{EDR}_{\text{max}}^{\text{strict}} = p_{\text{gen}}^d \cdot p_{\text{swap}}^{d-1}
+\]
+
+\paragraph*{Steady-State Bound (Perfect Memory)}
+With infinite entanglement lifetime, each round only needs to generate the missing link(s). Assuming most links are pre-entangled:
+\[
+\text{EDR}_{\text{max}}^{\text{steady}} = p_{\text{gen}} \cdot p_{\text{swap}}^{d-1}
+\]
+
+\paragraph*{Intermediate Case: Limited Lifetime}
+When \texttt{maxAge} = 2, entanglement can persist across one additional timestep, increasing the likelihood of usable paths. Although closed-form analysis is more complex, the improvement over \texttt{maxAge} = 1 is substantial. For instance, the chance that two adjacent links are both entangled within a two-timestep window becomes:
+\[
+P(\text{both ready in 2 steps}) = 1 - (1 - p_{\text{gen}}^2)^2
+\]
+
+This non-trivially boosts the EDR.
+
+\subsubsection*{Worked Example: Single Goal, 3-Hop Line Network}
+Assume a path from node 0 to node 3 via 1 and 2 (\texttt{maxAge} = 1):
+\begin{align*}
+d &= 3, \quad p_{\text{gen}} = 0.5, \quad p_{\text{swap}} = 0.8 \\
+\text{EDR}_{\text{max}} &= 0.5^3 \cdot 0.8^2 = 0.125 \cdot 0.64 = \mathbf{0.08}
+\end{align*}
+
+Under simulation with our trained RL policy, we observed an average throughput of \textbf{YYYY}, corresponding to a \textbf{utilization ratio of XXXX\%}. This is to be expected due to [TODO]
+
+\subsubsection*{Effect of \texttt{maxAge} on Policy Efficiency}
+To evaluate memory impact, we trained policies under varying \texttt{maxAge} values and compared empirical throughput to theoretical bounds.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\texttt{maxAge} & Empirical EDR & Expected Max & Utilization \\
+\midrule
+1 & XXXX & 0.080 & 81.25\% \\
+2 & XXXX & 0.128 (approx) & 71.9\% \\
+$\infty$ & XXXX & 0.125 & 88.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results demonstrate that:
+\begin{itemize}
+    \item Memory increases success opportunities by allowing partial paths to accumulate over time.
+    \item Even modest memory (\texttt{maxAge}=2) significantly reduces synchronization pressure.
+    \item However, benefits saturate: longer memories approach diminishing returns unless the network topology or traffic patterns justify it.
+\end{itemize}
+
+\subsubsection*{Takeaway}
+Entanglement memory (i.e., \texttt{maxAge}) provides a strong lever for increasing throughput, particularly on longer paths. Our empirical results closely track the theoretical upper bounds, demonstrating that RL agents can approach optimal behavior under realistic constraints. However, utilization never reaches 100\%, due to stochastic delays and action exploration. This gap represents potential for optimization or protocol-level enhancements like purification.
+
+
+
+
+\subsection{Topology and Structural Fairness}
+
+Topology is a first-order factor in fairness-aware quantum scheduling. In our experiments, goals $(0,5)$ and $(2,4)$ share a bottleneck edge $(3,4)$—creating asymmetric access by design. Despite equal rewards, shorter or less contended paths dominate. Goal $(0,5)$ consistently underperforms, highlighting how structure alone can embed inequity.
+
+Shared links introduce unavoidable contention. Even with an optimal policy, fairness is structurally constrained when some goals depend on more edges or face higher competition. This makes topology not just a substrate for scheduling—but an active determinant of fairness outcomes.
+
+Centralized (switch-based) topologies avoid these issues. By giving each application a direct link to a hub, contention is controlled and decision-making simplified. While not scalable, such layouts enable fair scheduling with minimal coordination—making them ideal for small or near-term networks.
+
+In contrast, line, star, or dumbbell topologies require policies to reason over path depth, memory reuse, and stochastic delays. Our results show that:
+
+\begin{itemize}
+    \item Longer or overlapping paths are disproportionately penalized.
+    \item Nested swaps and memory (\texttt{maxAge} > 1) partially compensate, but do not eliminate structural bias.
+    \item Fairness-aware policies are topology-sensitive—without structural symmetry, reward signals alone are insufficient.
+\end{itemize}
+
+\textbf{Takeaway:} Fairness cannot be meaningfully evaluated without accounting for topology. Structural constraints—such as path length, contention points, and edge overlap—directly shape agent behaviour, often overpowering reward design alone. This represents a core limitation of our work: performance is highly sensitive to environmental parameters like $p_{\text{swap}}$, $p_{\text{gen}}$, and \texttt{maxAge}, all of which interact non-linearly. Moreover, effective learning often requires environment-specific tuning of algorithmic parameters such as $n$-step lookahead, exploration schedules, and learning rates. As a result, generalizing across topologies or deployments remains an open challenge. Future systems must treat fairness as a joint function of topology, protocol design, and adaptive control.
+
+
+
+
+\subsection{Generalization Discussion}
+How well does the code work if we... i.e. changed a parameter after training, or removed an edge from the intial graph..
+
+
+
+
+
+
+
+
+\subsection{[TODO] Implementation Challenges and Limitations}
+\begin{itemize}
+    \item exploration in a stochastic setting
+    \item deciding on test env, as in my topologies the best solution is equiv to greedy
+    \item dealing with mass amounts of parameters
+    \item debugging strategies
+    \item so many extension (nested, dynamic topology hetero, fidelity..)
+    \item have / will our results ever truely converge?
+\end{itemize}
+
+
+% Did you verify your environment and agents?
+% How did you test edge cases?
+% Did your logs help confirm correct behavior?
+% Talk about edges cases at pGen and pSwap = 1
+% Polict generelaisaiton... will it work well on another topology.. obv not when adding new ndoes.. but hwat about failure case or deletion? something more dynmaic would have to update as it's run
+
+\subsection{Summary of Evaluation}
+
+\section{Conclusion}
+% Overall findings, tradeoffs, strengths/weaknesses
+% Key takeaways for future work
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 % that's all folks

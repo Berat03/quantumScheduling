@@ -4,20 +4,83 @@ from collections import defaultdict
 import random
 import math
 import math
+import pandas as pd
 
-def plot_q_value_convergence(q_value_diffs, window=10):
-    # Optional: Smooth the plot with a moving average
+def print_rl_policy_summary(
+    goal_success_counts,
+    num_steps,
+    edr_history,
+    jain_history,
+    burn_in=2000,
+    label="RL Policy"
+):
+    print(f"\n=== Summary Statistics: {label} ===")
+
+    # Compute final EDRs per goal (after burn-in)
+    trimmed_edrs = {
+        goal: edr_history[goal][burn_in:] for goal in edr_history
+    }
+    mean_edrs = {
+        goal: np.mean(values) for goal, values in trimmed_edrs.items()
+    }
+
+    # Jain's Index after burn-in
+    mean_jain = np.mean(jain_history[burn_in:])
+
+    # Print per-goal EDR
+    for goal, val in mean_edrs.items():
+        print(f"  Goal {goal} EDR: {val:.4f}")
+
+    # Print overall stats
+    total_throughput = sum(mean_edrs.values())
+    print(f"  Total Throughput: {total_throughput:.4f}")
+    print(f"  Jain's Fairness Index: {mean_jain:.4f}")
+
+
+def plot_q_value_convergence(q_value_diffs, q_value_diffs_per_goal, window=1000):
+    # --- Global plot ---
     smoothed = np.convolve(q_value_diffs, np.ones(window)/window, mode='valid')
-
     plt.figure(figsize=(10, 5))
-    plt.plot(smoothed, label=f"Q-Value Change (rolling avg, window={window})")
+    plt.plot(smoothed, label=f"Global Q-Value Δ (rolling avg, window={window})", color='slateblue')
     plt.xlabel("Training Steps")
-    plt.ylabel("Average ΔQ per Update")
-    plt.title("Convergence of Q-Values During Training")
+    plt.ylabel("Average ΔQ")
+    plt.title("Global Q-Value Convergence During Training")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+    # --- Per-goal plot ---
+    plt.figure(figsize=(10, 5))
+
+    # Use unique line styles or markers
+    line_styles = ['-', '--', '-.', ':']
+    colors = plt.cm.viridis(np.linspace(0, 1, len(q_value_diffs_per_goal)))
+
+    for i, (goal, diffs) in enumerate(q_value_diffs_per_goal.items()):
+        diffs_cleaned = np.array(diffs, dtype=np.float32)
+        if np.all(np.isnan(diffs_cleaned)):
+            continue  # Skip if all values are NaN
+
+        smoothed = pd.Series(diffs_cleaned).rolling(window=window, min_periods=1).mean()
+        plt.plot(
+            smoothed,
+            label=f"Goal {goal}",
+            linestyle=line_styles[i % len(line_styles)],
+            color=colors[i],
+            alpha=0.9
+        )
+
+    plt.xlabel("Training Steps")
+    plt.ylabel("ΔQ per Update")
+    plt.title("Per-Goal Q-Value Convergence")
+    plt.grid(True)
+    plt.legend(loc="upper right", fontsize="small")
+    plt.tight_layout()
+    plt.show()
+
+
+
 
 
 def compute_reward(
@@ -38,22 +101,30 @@ def compute_reward(
     success_prob = pSwap ** (len(consumed_edges) - 1)
     edr = sum(goal_success_queues[goal_edge]) / max(1, len(goal_success_queues[goal_edge])) + epsilon
     x = success_prob / edr
-
+    reward = 0.0 
     if mode == "alpha_fair":
         if alpha == 1.0:
             expected_reward = math.log(1 + x)
         else:
             expected_reward = ((1 + x) ** (1 - alpha)) / (1 - alpha)
         reward = expected_reward if success else 0.0
-
     elif mode == "partial":
         expected_reward = math.log(1 + x)
         reward = expected_reward if success else 0.5 * expected_reward
-
-    else:  # "basic"
+    elif mode == "without+1":
+        if x <= epsilon:
+            print('maximum overdrive')
+        x = max(x, epsilon)  # Ensure x > 0 to avoid log(0) or negative
+        expected_reward = math.log(x)
+        reward = expected_reward if success else 0.0
+    elif mode == 'logless':
+        expected_reward = x
+        reward = expected_reward if success else 0.0
+    elif mode == 'basic':  # "basic"
         expected_reward = math.log(1 + x)
         reward = expected_reward if success else 0.0
-
+    else:
+        print('NO REWARD CHOSEN')
     goal_success_queues[goal_edge].append(1 if success else 0)
     return reward
 
@@ -195,158 +266,68 @@ def compare_policies_across_alpha(
         all_results[alpha_val] = results
 
     if plot:
-        fig, axs = plt.subplots(2, 3, figsize=(36, 12))
-        axs = axs.flatten()
+        fig, axs = plt.subplots(1, 3, figsize=(26, 6))
         color_map = plt.get_cmap("tab10")
 
-        # --- Jain's Fairness Plot ---
+        # --- Final EDR per Goal ---
+        for goal_i, goal in enumerate(goal_edges):
+            for i, alpha in enumerate(alpha_values):
+                y_vals = all_results[alpha]['edrs'][goal]
+                axs[0].scatter([alpha] * len(y_vals), y_vals, label=f"{goal}" if i == 0 else "", alpha=0.6, s=30, color=color_map(goal_i))
+            mean_y = [np.mean(all_results[alpha]['edrs'][goal]) for alpha in alpha_values]
+            axs[0].plot(alpha_values, mean_y, linestyle='--', linewidth=2, color=color_map(goal_i))
+
+        axs[0].set_title("Final EDR per Goal")
+        axs[0].set_xlabel("Alpha")
+        axs[0].set_ylabel("EDR")
+        axs[0].set_ylim(0, 1)
+        axs[0].legend(fontsize=9)
+        axs[0].grid(True)
+
+        # --- Jain's Index ---
         means_jain = []
         for i, alpha in enumerate(alpha_values):
             jains = all_results[alpha]['jains']
-            axs[0].scatter([alpha] * len(jains), jains, color=color_map(i), alpha=0.6)
+            axs[1].scatter([alpha] * len(jains), jains, color=color_map(i), alpha=0.6)
             means_jain.append(np.mean(jains))
+        axs[1].plot(alpha_values, means_jain, color='black', linestyle='-', linewidth=2, label="Mean Jain's")
+        axs[1].set_title("Jain's Fairness vs Alpha")
+        axs[1].set_xlabel("Alpha")
+        axs[1].set_ylabel("Jain's Index")
+        axs[1].set_ylim(0.45, 1.05)
+        axs[1].legend()
+        axs[1].grid(True)
 
-        axs[0].plot(alpha_values, means_jain, color='black', linestyle='-', linewidth=2, label="Mean Jain's")
-        axs[0].set_title("Jain's Fairness vs Alpha")
-        axs[0].set_xlabel("Alpha")
-        axs[0].set_ylabel("Jain's Index")
-        axs[0].set_ylim(0.45, 1.05)
-        axs[0].legend()
-        axs[0].grid(True)
-
-        # --- Pareto curve: Throughput vs Jain ---
+        # --- Pareto Curve: Throughput vs Jain ---
         avg_throughputs = []
         avg_jains = []
 
         for i, alpha in enumerate(alpha_values):
             jains = all_results[alpha]['jains']
             throughputs = [sum(all_results[alpha]['edrs'][goal][run_i] for goal in goal_edges) for run_i in range(num_runs)]
-
-            axs[1].scatter(throughputs, jains, color=color_map(i), label=f"α={alpha}", s=60, alpha=0.7)
-
+            axs[2].scatter(throughputs, jains, color=color_map(i), label=f"α={alpha}", s=60, alpha=0.7)
             avg_throughputs.append(np.mean(throughputs))
             avg_jains.append(np.mean(jains))
 
-        axs[1].plot(avg_throughputs, avg_jains, color='black', linestyle='-', linewidth=2, label="Mean Trend")
-        axs[1].set_title("Pareto Curve: Throughput vs Jain's Index")
-        axs[1].set_xlabel("Total Throughput")
-        axs[1].set_ylabel("Jain's Index")
-        axs[1].set_xlim(0, 1.05)
-        axs[1].set_ylim(4.5, 1.05)
-        axs[1].legend()
-        axs[1].grid(True)
-
-        # --- Final EDR per Goal ---
-        for goal_i, goal in enumerate(goal_edges):
-            for i, alpha in enumerate(alpha_values):
-                y_vals = all_results[alpha]['edrs'][goal]
-                axs[2].scatter([alpha] * len(y_vals), y_vals, label=f"{goal}" if i == 0 else "", alpha=0.6, s=30, color=color_map(goal_i))
-
-            mean_y = [np.mean(all_results[alpha]['edrs'][goal]) for alpha in alpha_values]
-            axs[2].plot(alpha_values, mean_y, linestyle='--', linewidth=2, color=color_map(goal_i))
-
-        axs[2].set_title("Final EDR per Goal")
-        axs[2].set_xlabel("Alpha")
-        axs[2].set_ylabel("EDR")
-        axs[2].set_ylim(0, 1)
-        axs[2].legend(fontsize=9)
+        axs[2].plot(avg_throughputs, avg_jains, color='black', linestyle='-', linewidth=2, label="Mean Trend")
+        axs[2].set_title("Pareto Curve: Throughput vs Jain's Index")
+        axs[2].set_xlabel("Total Throughput")
+        axs[2].set_ylabel("Jain's Index")
+        axs[2].set_xlim(0, 1.05)
+        axs[2].set_ylim(0.45, 1.05)
+        axs[2].legend()
         axs[2].grid(True)
 
-        # --- Expected Delivery Time per Goal ---
-        for goal_i, goal in enumerate(goal_edges):
-            for i, alpha in enumerate(alpha_values):
-                y_vals = all_results[alpha]['edts'][goal]
-                axs[3].scatter([alpha] * len(y_vals), y_vals, label=f"{goal}" if i == 0 else "", alpha=0.6, s=30, color=color_map(goal_i))
-
-            mean_y = [np.mean(all_results[alpha]['edts'][goal]) for alpha in alpha_values]
-            axs[3].plot(alpha_values, mean_y, linestyle='--', linewidth=2, color=color_map(goal_i))
-
-        axs[3].set_title("Expected Delivery Time per Goal")
-        axs[3].set_xlabel("Alpha")
-        axs[3].set_ylabel("EDT (1 / EDR)")
-        axs[3].set_ylim(0, 100)
-        axs[3].legend(fontsize=9)
-        axs[3].grid(True)
-
-        # --- Aged-Out & Action Ratio ---
-        for i, alpha in enumerate(alpha_values):
-            all_aged = all_results[alpha]['aged_out_histories']
-            all_actions = all_results[alpha]['action_ratio_histories']
-
-            aged_vals = [np.mean(sim[-1000:]) for run in all_aged for sim in run]
-            action_vals = [np.mean(sim[-1000:]) for run in all_actions for sim in run]
-
-            axs[4].scatter([alpha] * len(aged_vals), aged_vals, color='orange', alpha=0.6, label="Aged-Out" if i == 0 else "")
-            axs[4].scatter([alpha] * len(action_vals), action_vals, color='teal', alpha=0.6, label="Action Ratio" if i == 0 else "")
-
-        axs[4].set_title("Aged-Out & Action Decision Ratio")
-        axs[4].set_xlabel("Alpha")
-        axs[4].set_ylabel("Ratio")
-        axs[4].set_ylim(0, 1)
-        axs[4].legend()
-        axs[4].grid(True)
-
-        axs[5].axis('off')
-
-        summary_title = (
-            f"{policy_name}: Varying Alpha Fairness\n"
-            f"Fixed Params — pGen={p_gen}, pSwap={p_swap}, maxAge={max_age}, "
-            f"num_runs={num_runs}, num_steps={num_steps}, num_sims={num_simulations}\n"
-            f"Initial Edges={edges}, Goal Edges={goal_edges}"
+        plt.suptitle(
+            f"{policy_name} — Varying Alpha (Fairness)\n"
+            f"Fixed: pGen={p_gen}, pSwap={p_swap}, maxAge={max_age}, runs={num_runs}, steps={num_steps}, sims={num_simulations}",
+            fontsize=18, y=1.02
         )
-
-        plt.suptitle(summary_title, fontsize=20, y=1.05)
-        plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
 
     return all_results
 
-
-def compute_reward(
-    action,
-    goal_success_queues,
-    total_timesteps,
-    pSwap,
-    mode="basic",             # "basic", "alpha_fair", or "partial"
-    alpha=0.5,
-    epsilon=0.001,
-    success=True
-):
-    consumed_edges, goal_edge = action
-
-    if goal_edge is None or not consumed_edges:
-        return 0.0
-
-    success_prob = pSwap ** (len(consumed_edges) - 1)
-    edr = sum(goal_success_queues[goal_edge]) / max(1, len(goal_success_queues[goal_edge])) + epsilon
-
-    # Relative performance ratio
-    x = success_prob / edr
-
-    # --- Choose Reward Calculation ---
-    if mode == "alpha_fair":
-        if alpha == 1.0:
-            expected_reward = math.log(1 + x)
-        else:
-            expected_reward = ((1 + x) ** (1 - alpha)) / (1 - alpha)
-
-        reward = expected_reward if success else 0.0
-
-    elif mode == "partial":
-        expected_reward = math.log(1 + x)
-        if success:
-            reward = expected_reward
-        else:
-            reward = 0.5 * expected_reward  # partial reward for attempt
-
-    else:  # "basic"
-        expected_reward = math.log(1 + x)
-        reward = expected_reward if success else 0.0
-
-    # Update queue with result
-    goal_success_queues[goal_edge].append(1 if success else 0)
-
-    return reward
 
 
 def getRewardAlphaFair(action, goal_success_queues, total_timesteps, pSwap, alpha=0.5, epsilon=0.001, success=True):
@@ -560,202 +541,161 @@ class LinearQApproximator:
         error = target - prediction
         self.weights[key] += alpha * error * features
         
+
+#####################################################################################################################
         
-        
-#########################################################################################################
+#####################################################################################################################
 ### PLOTTTING #########################################################################################################
-#########################################################################################################
-def simulate_policy(Q_table, edges, goal_edges, p_swap, p_gen, max_age, num_steps, edr_window_size=100, plot=True):
-    raw_state = [(edge, -1) for edge in edges]
-    goal_success_counts = {goal: 0 for goal in goal_edges}
-    recent_goal_history = {goal: [] for goal in goal_edges}
+#####################################################################################################################
 
-    edr_history = {goal: [] for goal in goal_edges}
-    jain_history = []
-    throughput_history = []
-    aged_out_history = []
-    action_ratio_history = []
-    valid_decision_points = []
-    q_values_history = []
-
-    current_state = get_augmented_state(raw_state, {g: 0 for g in goal_edges}, goal_order=goal_edges)
-
-    for step in range(num_steps):
-        ent_state, _ = current_state
-        possible_actions = getPossibleActions(ent_state, goal_edges)
-        if ([], None) not in possible_actions:
-            possible_actions.append(([], None))
-
-        # --- FIXED ACTION RATIO LOGIC ---
-        real_actions = [a for a in possible_actions if a != ([], None)]
-        actions_available = len(real_actions) > 0
-        valid_decision_points.append(1 if actions_available else 0)
-
-        best_action = ([], None)
-        best_score = -float("inf")
-
-        features = featurize_state(current_state, goal_edges)
-
-        for action in possible_actions:
-            q_val = Q_table.get_q_value(features, action)
-            if q_val > best_score:
-                best_score = q_val
-                best_action = action
-
-        q_values_history.append(best_score)
-
-        # --- FIX: Determine if action taken is one of the real actions ---
-        if actions_available:
-            action_taken = best_action in real_actions
-            action_ratio_history.append(1.0 if action_taken else 0.0)
-        else:
-            action_ratio_history.append(np.nan)
+#####################################################################################################################
 
 
-        num_existing_before = sum(1 for _, age in ent_state if age >= 0)
-        current_state = performAction(best_action, current_state)
-        current_state = ageEntanglements(current_state, max_age)
-        num_existing_after = sum(1 for _, age in current_state[0] if age >= 0)
+def simulate_policy(
+    Q_table,
+    edges,
+    goal_edges,
+    p_swap,
+    p_gen,
+    max_age,
+    num_steps,
+    edr_window_size=100,
+    burn_in=None,
+    plot=True
+):
+    """
+    Simulate a learned policy and optionally plot:
+      (0,0) EDR time series + Jain's index
+      (0,1) single Pareto point (avg throughput vs avg fairness after burn-in)
+      (1,0) corrected action-decision ratio
+      (1,1) best Q-value over time
 
-        current_state = generateEntanglement(current_state, p_gen)
-        num_generated_after = sum(1 for _, age in current_state[0] if age == 1)
+    Returns dict of histories.
+    """
+    if burn_in is None:
+        burn_in = num_steps // 2
 
-        num_aged_out = num_existing_before - num_existing_after
-        aged_out_ratio = num_aged_out / (num_aged_out + num_generated_after) if (num_aged_out + num_generated_after) > 0 else 0.0
-        aged_out_history.append(aged_out_ratio)
+    # --- initialize ---
+    raw = [(e, -1) for e in edges]
+    current = get_augmented_state(raw, {g:0.0 for g in goal_edges}, goal_order=goal_edges)
 
-        consumed_edges, goal = best_action
+    recent = {g: [] for g in goal_edges}
+    edr_hist, jain_hist, tp_hist = {g:[] for g in goal_edges}, [], []
+    valids, acts, qvals = [], [], []
+
+    # --- simulate ---
+    for t in range(num_steps):
+        ent_state, _ = current
+        acts_all = getPossibleActions(ent_state, goal_edges)
+        if ([],None) not in acts_all:  # Ensure it's in there
+            acts_all.append(([],None))
+        real = [a for a in acts_all if a!=([],None)]
+        avail = len(real)>0
+        valids.append(1 if avail else 0)
+
+        # choose best action
+        feats = featurize_state(current, goal_edges)
+        best_a, best_q = max(((a, Q_table.get_q_value(feats,a)) for a in acts_all), key=lambda x:x[1])
+        qvals.append(best_q)
+        acts.append(1.0 if (avail and best_a in real) else 0.0)
+
+        # step env
+        nxt = performAction(best_a, current)
+        nxt = ageEntanglements(nxt, max_age)
+        nxt = generateEntanglement(nxt, p_gen)
+
+        # update recent success histories
+        cons, goal = best_a
         for g in goal_edges:
-            if g == goal and consumed_edges:
-                success = random.random() < (p_swap ** (len(consumed_edges) - 1))
-                if success:
-                    goal_success_counts[g] += 1
-                    recent_goal_history[g].append(1)
-                else:
-                    recent_goal_history[g].append(0)
+            if g==goal and cons:
+                succ = random.random() < (p_swap**(len(cons)-1))
+                recent[g].append(1 if succ else 0)
             else:
-                recent_goal_history[g].append(0)
+                recent[g].append(0)
+            if len(recent[g])>edr_window_size:
+                recent[g].pop(0)
 
+        # compute EDRs, Jain, throughput
+        edrs = {g: sum(recent[g])/len(recent[g]) for g in goal_edges}
         for g in goal_edges:
-            if len(recent_goal_history[g]) > edr_window_size:
-                recent_goal_history[g].pop(0)
+            edr_hist[g].append(edrs[g])
+        total = sum(edrs.values())
+        tp_hist.append(total)
+        jain_hist.append(jains_index(edrs))
 
-        edrs = {g: sum(recent_goal_history[g]) / len(recent_goal_history[g]) for g in goal_edges}
-        for g in goal_edges:
-            edr_history[g].append(edrs[g])
+        current = get_augmented_state(nxt[0], edrs, goal_order=goal_edges)
 
-        throughput = sum(edrs.values())
-        fairness = jains_index(edrs)
+    # build corrected action ratio
+    corr = []
+    w=100
+    for i in range(w, len(acts)):
+        window_valid = valids[i-w:i]
+        window_act   = acts[i-w:i]
+        acted = [a for a,v in zip(window_act,window_valid) if v==1]
+        corr.append(np.mean(acted) if acted else np.nan)
 
-        throughput_history.append(throughput)
-        jain_history.append(fairness)
-
-        current_state = get_augmented_state(current_state[0], edrs, goal_order=goal_edges)
-
-    def rolling_average(data, window):
-        return np.convolve(data, np.ones(window) / window, mode='valid')
-
-    smoothed_aged_out = rolling_average(aged_out_history, 100)
-    smoothed_action_ratio = rolling_average([x for x in action_ratio_history if not np.isnan(x)], 100)
-
-    corrected_ratios = []
-    window = 100
-    for t in range(window, len(action_ratio_history)):
-        valid_window = valid_decision_points[t - window:t]
-        acted_window = action_ratio_history[t - window:t]
-        if sum(valid_window) > 0:
-            corrected = np.mean([a for a, v in zip(acted_window, valid_window) if v == 1 and not np.isnan(a)])
-        else:
-            corrected = np.nan
-        corrected_ratios.append(corrected)
-
+    # --- plotting ---
     if plot:
-        fig, axs = plt.subplots(2, 2, figsize=(16, 10))
-
-        for goal in goal_edges:
-            axs[0, 0].plot(edr_history[goal], label=f'Goal {goal}')
-        axs[0, 0].set_title('EDR Evolution Over Time')
-        axs[0, 0].set_xlabel('Timestep')
-        axs[0, 0].set_ylabel('EDR')
-        axs[0, 0].legend()
-        axs[0, 0].grid(True)
-        axs[0, 0].set_ylim(0, 1)
-
-        axs[0, 1].plot(jain_history, color='purple')
-        axs[0, 1].set_title("Jain's Fairness Index Over Time")
-        axs[0, 1].set_xlabel('Timestep')
-        axs[0, 1].set_ylabel("Jain's Index")
-        axs[0, 1].grid(True)
-        axs[0, 1].set_ylim(0, 1.05)
-
-        axs[1, 0].scatter(throughput_history, jain_history, color='darkred', alpha=0.7, s=10)
-        axs[1, 0].set_title("Pareto Curve: Throughput vs Jain's Fairness")
-        axs[1, 0].set_xlabel("Total Throughput")
-        axs[1, 0].set_ylabel("Jain's Index")
-        axs[1, 0].grid(True)
-        axs[1, 0].set_xlim(0, 1)
-        axs[1, 0].set_ylim(0, 1.05)
-
-        axs[1, 1].plot(smoothed_aged_out, color='orange')
-        axs[1, 1].set_title("Aged-Out Entanglement Ratio (Smoothed)")
-        axs[1, 1].set_xlabel("Timestep")
-        axs[1, 1].set_ylabel("Aged Out Ratio")
-        axs[1, 1].grid(True)
-
-        plt.tight_layout()
-
-        plt.figure(figsize=(8, 4))
-        plt.plot(corrected_ratios, label="Corrected Action Ratio", color='teal')
-        plt.title("Corrected Action Decision Ratio (when actions possible)")
-        plt.xlabel("Timestep")
-        plt.ylabel("Ratio")
-        plt.ylim(0, 1.05)
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
-        plt.figure(figsize=(8, 4))
-        plt.plot(q_values_history, label="Best Q-Value", color='slateblue')
-        plt.title("Q-Value of Selected Actions Over Time")
-        plt.xlabel("Timestep")
-        plt.ylabel("Q-Value")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
-        summary_title = (
-            f"Simulate Policy: Static Run\n"
-            f"Fixed Params — pGen={p_gen}, pSwap={p_swap}, maxAge={max_age}, "
-            f"num_steps={num_steps}\n"
-            f"Initial Edges={edges}, Goal Edges={goal_edges}"
+        fig, axs = plt.subplots(2,2, figsize=(12,10))
+        fig.suptitle(
+            f"Policy Sim — pSwap={p_swap}, pGen={p_gen}, maxAge={max_age}, steps={num_steps}, window={edr_window_size}",
+            fontsize=14
         )
-        plt.suptitle(summary_title, fontsize=18, y=1.02)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.98])
+
+        # (0,0) EDR + Jain
+        ax0 = axs[0,0]
+        for g in goal_edges:
+            ax0.plot(edr_hist[g], label=f"EDR {g}")
+        ax0.plot(jain_hist, '--', label="Jain's", linewidth=2)
+        ax0.set_title("EDR (solid) & Jain (dashed)")
+        ax0.set_xlabel("Timestep"); ax0.set_ylabel("Value"); ax0.set_ylim(0,1.05)
+        ax0.legend()
+
+        # (0,1) single Pareto point after burn-in
+        ax1 = axs[0,1]
+        avg_tp    = np.mean(tp_hist[burn_in:])
+        avg_jain  = np.mean(jain_hist[burn_in:])
+        ax1.scatter([avg_tp],[avg_jain], s=100, c='crimson')
+        ax1.set_title("Final Pareto Point")
+        ax1.set_xlabel("Avg Throughput"); ax1.set_ylabel("Avg Jain")
+        ax1.set_xlim(0, max(tp_hist)*1.1); ax1.set_ylim(0,1.05)
+        ax1.text(avg_tp, avg_jain, f"  ({avg_tp:.3f}, {avg_jain:.3f})")
+
+        # (1,0) corrected action ratio
+        ax2 = axs[1,0]
+        ax2.plot(corr, color='teal')
+        ax2.set_title("Corrected Action Ratio"); ax2.set_xlabel("Timestep"); ax2.set_ylabel("Ratio")
+        ax2.set_ylim(0,1.05)
+
+        # (1,1) best Q-value
+        ax3 = axs[1,1]
+        ax3.plot(qvals, color='slateblue')
+        ax3.set_title("Best Q-Value Over Time"); ax3.set_xlabel("Timestep"); ax3.set_ylabel("Q-Value")
+
+        plt.tight_layout(rect=[0,0,1,0.95])
         plt.show()
+        
+        
+    # --- metrics after burn-in of 10,000 steps ---
+    burn_in_idx = 10000
+    final_edrs = {g: np.mean(edr_hist[g][burn_in_idx:]) for g in goal_edges}
+    final_tp = sum(final_edrs.values())
+    final_jain = jains_index(final_edrs)
 
-    burn_in = 2000
-    trimmed_edrs = {
-        goal: edr_history[goal][burn_in:] for goal in goal_edges
+    print("\nMetrics After Burn-in (first 10,000 steps ignored):")
+    print("Mean EDRs:", {g: f"{v:.4f}" for g, v in final_edrs.items()})
+    print(f"Total Throughput (sum of EDRs): {final_tp:.4f}")
+    print(f"Jain's Fairness Index: {final_jain:.4f}")
+
+    return {
+        "edr_history": edr_hist,
+        "jain_history": jain_hist,
+        "throughput_history": tp_hist,
+        "action_ratio": corr,
+        "q_values": qvals
     }
-    trimmed_jains = jain_history[burn_in:]
 
-    mean_edrs = {goal: np.mean(trimmed_edrs[goal]) for goal in goal_edges}
-    mean_jains = np.mean(trimmed_jains)
 
-    print("\n=== Mean EDRs After Burn-In ===")
-    for goal, edr_val in mean_edrs.items():
-        print(f"Goal {goal}: {edr_val:.4f}")
-    print(f"Mean Jain's Index (after burn-in): {mean_jains:.4f}")
-
-    return (
-        goal_success_counts,
-        num_steps,
-        edr_history,
-        jain_history,
-        throughput_history,
-        smoothed_aged_out,
-        smoothed_action_ratio
-    )
 
 
 
@@ -831,7 +771,7 @@ def validate_policy_simulation(Q_table, edges, goal_edges, p_swap, p_gen, max_ag
         axs[2].set_ylabel("Jain's Index")
         axs[2].grid(True)
         axs[2].set_xlim(0, max(final_edr_means) * 1.1)
-        axs[2].set_ylim(0.45, 1.05)
+        axs[2].set_ylim(0, 1.05)
 
         # --- Aged-Out Ratio ---
         avg_aged = [np.mean(sim[-window:]) for sim in all_aged_out_histories]
@@ -1179,3 +1119,105 @@ def compare_policies_across_param(
         plt.show()
 
     return all_results
+
+
+def bootstrap_policy_runs(
+    policy_train_fn,
+    policy_name,
+    edges,
+    goal_edges,
+    p_swap,
+    p_gen,
+    max_age,
+    num_runs=10,
+    num_steps=30000,
+    train_kwargs={},
+    seed_offset=0,
+    plot=True,
+    window=1000
+):
+    all_edrs = {goal: [] for goal in goal_edges}
+    all_jains = []
+    all_throughputs = []
+
+    for i in range(num_runs):
+        seed = seed_offset + i
+        print(f"\n--- Bootstrap Run {i+1}/{num_runs} (seed={seed}) ---")
+        random.seed(seed)
+        np.random.seed(seed)
+
+        Q_table = policy_train_fn(
+            edges=edges,
+            goal_edges=goal_edges,
+            p_swap=p_swap,
+            p_gen=p_gen,
+            max_age=max_age,
+            seed=seed,
+            **train_kwargs
+        )
+
+        _, _, edr_hist, jain_hist, _, _, _ = simulate_policy(
+            Q_table=Q_table,
+            edges=edges,
+            goal_edges=goal_edges,
+            p_swap=p_swap,
+            p_gen=p_gen,
+            max_age=max_age,
+            num_steps=num_steps,
+            plot=False
+        )
+
+        for goal in goal_edges:
+            all_edrs[goal].append(edr_hist[goal])
+
+        all_jains.append(jain_hist)
+        all_throughputs.append([
+            sum(edr_hist[g][t] for g in goal_edges)
+            for t in range(num_steps)
+        ])
+
+    # Plotting
+    if plot:
+        fig, axs = plt.subplots(1, 3, figsize=(22, 6))
+
+        # --- EDR per goal ---
+        for goal_i, goal in enumerate(goal_edges):
+            for run_edr in all_edrs[goal]:
+                axs[0].plot(run_edr, alpha=0.3, color=f"C{goal_i}")
+            mean_edr = np.mean(all_edrs[goal], axis=0)
+            axs[0].plot(mean_edr, label=f"Goal {goal} (mean)", linewidth=2, color=f"C{goal_i}")
+
+        axs[0].set_title("EDR per Goal (Bootstrap Runs)")
+        axs[0].set_xlabel("Timestep")
+        axs[0].set_ylabel("EDR")
+        axs[0].legend()
+        axs[0].grid(True)
+
+        # --- Jain's Index ---
+        for run_jain in all_jains:
+            axs[1].plot(run_jain, alpha=0.3, color="purple")
+        axs[1].plot(np.mean(all_jains, axis=0), label="Mean Jain's", color="black", linewidth=2)
+        axs[1].set_title("Jain's Index (Bootstrap Runs)")
+        axs[1].set_xlabel("Timestep")
+        axs[1].set_ylabel("Jain's Index")
+        axs[1].legend()
+        axs[1].grid(True)
+
+        # --- Pareto: Throughput vs Jain ---
+        final_jains = [np.mean(run[-window:]) for run in all_jains]
+        final_throughputs = [np.mean(run[-window:]) for run in all_throughputs]
+        axs[2].scatter(final_throughputs, final_jains, color="darkred", alpha=0.6)
+        axs[2].set_title("Pareto Curve: Throughput vs Jain's Index")
+        axs[2].set_xlabel("Final Throughput (Mean over last steps)")
+        axs[2].set_ylabel("Final Jain's Index")
+        axs[2].grid(True)
+
+        plt.suptitle(f"{policy_name}: Bootstrap Evaluation over {num_runs} seeds")
+        plt.tight_layout()
+        plt.show()
+
+    return {
+        "edrs": all_edrs,
+        "jains": all_jains,
+        "throughputs": all_throughputs,
+    }
